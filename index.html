@@ -1,0 +1,993 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>面談カード配置</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="stylesheet.css">
+<style>[hidden]{display:none!important} body{margin:0}</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="cssWarn" hidden style="margin:16px;padding:12px 16px;border:2px solid #ad261e;background:#f8dfdc;color:#5a120e;font:14px/1.6 sans-serif;border-radius:6px">
+スタイル（<b>stylesheet.css</b>）が読み込めていません。このHTMLと同じフォルダに、ちょうどこの名前で置いてください。<br>
+ダウンロードし直したときに「stylesheet (1).css」のように名前が変わっていないかも確認してください。
+</div>
+<script>window.addEventListener('load',function(){var v=getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();if(!v)document.getElementById('cssWarn').hidden=false;});</script>
+<script>window.PAGE={"key": "a", "kicker": "パターン 1＋2 · カード配置＋自動割当", "name": "面談カード配置", "lead": "候補者カードを時間×面談相手の表に置いていく方式。自動で出した案を読み込んで、カードを動かして仕上げます。", "scheduleTab": "配置ボード"};</script>
+<script>
+(function(){
+'use strict';
+const PAGE = window.PAGE;
+const KEY = 'mensetsu-' + PAGE.key + '-v2';
+const App = window.App = { tab:'schedule', sel:null, plans:null, armed:null, actions:{} };
+let S = null;
+Object.defineProperty(App, 'S', { get:()=>S });
+
+/* ---------- utils ---------- */
+const esc = s => String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+const toMin = t => { const [h,m] = String(t||'0:0').split(':').map(Number); return (h||0)*60 + (m||0); };
+const fmt = m => String(Math.floor(m/60)).padStart(2,'0') + ':' + String(m%60).padStart(2,'0');
+const uid = p => p + Math.random().toString(36).slice(2,8);
+const MARK = { pref:'◎', ok:'○', avoid:'△', nobp:'△', ng:'×' };
+const AV_LABEL = { pref:'希望', ok:'可', nobp:'BPなしなら可', ng:'不可' };
+const IP_LABEL = { pref:'希望', ok:'どちらでも', avoid:'避けたい', ng:'不可' };
+const CYCLE_AV = ['ok','pref','ng'];
+const CYCLE_AV_BP = ['ok','pref','nobp','ng'];
+const CYCLE_IP = ['ok','pref','avoid','ng'];
+Object.assign(App, { esc, toMin, fmt, MARK, AV_LABEL, IP_LABEL });
+
+function dayLabel(ds){
+  if(!ds) return '日付未設定';
+  const d = new Date(ds + 'T00:00:00'); if(isNaN(d)) return ds;
+  return (d.getMonth()+1) + '/' + d.getDate() + '(' + '日月火水木金土'[d.getDay()] + ')';
+}
+
+/* ---------- state ---------- */
+const FIXED_IV = () => [{id:'i1',name:'Cambridge University Press',short:'CUP'},{id:'i2',name:'Springer',short:'Springer'},{id:'i3',name:'Bloomsbury Publishing',short:'Bloomsbury'}];
+function sample(){
+  const C = (id,name,av,ip,note,bp) => ({ id, name, bp:bp !== false, avail:{ d1_am:av[0], d1_pm:av[1], d2_am:av[2], d2_pm:av[3] }, ipref:ip, note:note||'' });
+  return {
+    isSample:true,
+    settings:{ days:[{id:'d1', date:'2026-11-06'},{id:'d2', date:'2026-11-07'}],
+      sessions:[{id:'am',label:'午前',start:'10:00',end:'12:00'},{id:'pm',label:'午後',start:'14:00',end:'16:00'}],
+      slotMin:20, gapMin:10, perCandidate:3 },
+    interviewers:FIXED_IV(), ivFixed:1,
+    candidates:[
+      C('c1','青木',['pref','ok','ng','ng'],{i1:'pref'}),
+      C('c2','石井',['ng','pref','ng','ok'],{i2:'pref'},'金曜午前は授業'),
+      C('c3','上野',['pref','ng','ok','ng'],{i3:'ng'}),
+      C('c4','遠藤',['ok','ok','ok','ok'],{i1:'pref',i3:'pref'},'BPなし・どこでも可',false),
+      C('c5','大野',['nobp','nobp','pref','ok'],{},'金曜はBPなしなら可'),
+      C('c6','加藤',['pref','ok','ng','ng'],{i1:'pref',i2:'avoid'}),
+      C('c7','木村',['ng','ng','ok','pref'],{},'土曜のみ'),
+      C('c8','小林',['pref','ng','pref','ng'],{i2:'pref',i3:'pref'}),
+      C('c9','佐々木',['pref','ok','ng','ng'],{i3:'pref'}),
+      C('c10','清水',['ok','ok','ok','ok'],{i2:'ng',i1:'pref'},'BPなし・どこでも可',false),
+      C('c11','鈴村',['ng','ng','pref','pref'],{}),
+      C('c12','中島',['ok','ok','ok','ok'],{i2:'pref'},'BPなし・どこでも可',false)
+    ],
+    assignments:[], locked:[]
+  };
+}
+function blank(){
+  const s = sample();
+  return { isSample:false, settings:s.settings, interviewers:FIXED_IV(), ivFixed:1, candidates:[], assignments:[], locked:[] };
+}
+function load(){ try{ const t = localStorage.getItem(KEY); if(t){ const o = JSON.parse(t); if(o && o.settings && o.candidates) return o; } }catch(e){} return null; }
+function save(){ try{ localStorage.setItem(KEY, JSON.stringify(S)); }catch(e){} }
+function normalize(o){
+  o.locked = o.locked || []; o.assignments = o.assignments || [];
+  if(!o.ivFixed){
+    o.interviewers = FIXED_IV(); o.ivFixed = 1;
+    const ids = new Set(o.interviewers.map(v => v.id));
+    o.assignments = o.assignments.filter(a => ids.has(a.iid));
+    (o.candidates || []).forEach(c => { if(c.ipref) for(const k in c.ipref) if(!ids.has(k)) delete c.ipref[k]; });
+  }
+  o.candidates.forEach(c => { c.avail = c.avail || {}; c.ipref = c.ipref || {}; c.note = c.note || ''; if(typeof c.bp !== 'boolean') c.bp = true; });
+  return o;
+}
+
+/* ---------- grid ---------- */
+function grid(){
+  const sessions = [], slots = [], map = {}, gmap = {};
+  const L = Math.max(5, +S.settings.slotMin || 0), GP = Math.max(0, +S.settings.gapMin || 0);
+  const multi = S.settings.days.length > 1;
+  S.settings.days.forEach(d => S.settings.sessions.forEach(se => {
+    const key = d.id + '_' + se.id;
+    const g = { key, day:d, se, label:(multi ? dayLabel(d.date) + ' ' : '') + se.label, slots:[] };
+    let t = toMin(se.start), k = 0; const end = toMin(se.end);
+    while(t + L <= end && k < 40){
+      const sl = { key:key + '_' + k, g:key, gi:sessions.length, idx:k, gidx:slots.length, start:t, end:t+L, label:fmt(t) };
+      g.slots.push(sl); slots.push(sl); map[sl.key] = sl; t += L + GP; k++;
+    }
+    sessions.push(g); gmap[key] = g;
+  }));
+  return { sessions, slots, map, gmap };
+}
+const K = () => Math.max(1, +S.settings.perCandidate || 1);
+const need = c => Math.max(0, K() - S.interviewers.filter(i => ((c.ipref && c.ipref[i.id]) || 'ok') === 'ng').length);
+const avail = (c, gk) => (c.avail && c.avail[gk]) || 'ok';
+const ip = (c, iid) => (c.ipref && c.ipref[iid]) || 'ok';
+const cand = id => S.candidates.find(c => c.id === id);
+const iv = id => S.interviewers.find(i => i.id === id);
+const ivShort = id => { const v = iv(id); return v ? (v.short || v.name) : ''; };
+const ivIndex = id => Math.max(0, S.interviewers.findIndex(i => i.id === id));
+const ivColor = id => 'var(--iv' + (ivIndex(id) % 6) + ')';
+App.bpBadge = c => c.bp ? '<span class="bp on" title="ブックプロポーザルあり">BP</span>' : '<span class="bp off" title="ブックプロポーザルなし">BPなし</span>';
+App.ordered = () => S.candidates.filter(c => c.bp).concat(S.candidates.filter(c => !c.bp));
+App.ivShort = id => ivShort(id);
+Object.assign(App, { grid, K, need, avail, ip, cand, iv, ivColor, ivIndex, dayLabel });
+
+/* ---------- evaluation ---------- */
+function evaluate(asg, G){
+  G = G || grid(); const k = K();
+  const cands = {}; S.candidates.forEach(c => cands[c.id] = { c, items:[], issues:[], status:'none', score:0, gaps:0 });
+  const ixIss = {}; const addIx = (ix,lvl,msg) => (ixIss[ix] = ixIss[ix] || []).push({lvl,msg});
+  const bi = {}, bc = {};
+  asg.forEach((a, ix) => {
+    const r = cands[a.cid], sl = G.map[a.slot]; if(!r || !sl) return;
+    r.items.push({ a, ix, sl });
+    (bi[a.iid+'|'+a.slot] = bi[a.iid+'|'+a.slot] || []).push(ix);
+    (bc[a.cid+'|'+a.slot] = bc[a.cid+'|'+a.slot] || []).push(ix);
+  });
+  for(const x in bi) if(bi[x].length > 1) bi[x].forEach(ix => addIx(ix,'bad','面談相手が同じ時間に重複'));
+  for(const x in bc) if(bc[x].length > 1) bc[x].forEach(ix => addIx(ix,'bad','同じ時間に2件入っています'));
+  let bpTot = 0, bpDone = 0, wishTot = 0, wishHit = 0, done = 0, bad = 0, total = 0, gapsAll = 0, placed = 0;
+  for(const id in cands){
+    const r = cands[id], c = r.c, k = need(c); r.need = k;
+    r.items.sort((x,y) => x.sl.gidx - y.sl.gidx);
+    const seen = {}, gs = new Set();
+    r.items.forEach((it, n) => {
+      it.n = n + 1; const p = ip(c, it.a.iid);
+      if(seen[it.a.iid]) addIx(it.ix,'bad','同じ面談相手が2回'); seen[it.a.iid] = 1;
+      if(p === 'ng') addIx(it.ix,'bad','面談不可の相手');
+      else if(p === 'avoid'){ addIx(it.ix,'warn','避けたい相手'); r.score -= 3; }
+      else if(p === 'pref') r.score += 2;
+      gs.add(it.sl.g);
+      const avv = avail(c, it.sl.g);
+      if(avv === 'ng') addIx(it.ix,'bad','参加できない時間帯');
+      else if(avv === 'nobp' && c.bp) addIx(it.ix,'warn','BPなしの時間帯');
+    });
+    if(gs.size > 1) r.items.forEach(it => addIx(it.ix,'bad','時間帯がまたがっています'));
+    let gaps = 0;
+    for(let i = 1; i < r.items.length; i++){ const a = r.items[i-1].sl, b = r.items[i].sl; if(a.g === b.g && b.idx - a.idx > 1) gaps += b.idx - a.idx - 1; }
+    r.gaps = gaps; r.score -= 2*gaps; gapsAll += gaps;
+    const oneG = gs.size === 1 ? [...gs][0] : null;
+    if(oneG && avail(c, oneG) === 'pref') r.score += 3;
+    r.bpPlaced = !!(c.bp && oneG && avail(c, oneG) !== 'nobp');
+    if(G.sessions.some(g => avail(c, g.key) === 'pref')){ wishTot++; if(oneG && avail(c, oneG) === 'pref') wishHit++; }
+    const want = Math.min(k, S.interviewers.filter(i => ip(c, i.id) === 'pref').length);
+    wishTot += want; wishHit += Math.min(want, r.items.filter(it => ip(c, it.a.iid) === 'pref').length);
+    const msgs = new Set();
+    r.items.forEach(it => (ixIss[it.ix] || []).forEach(x => { if(!msgs.has(x.msg)){ msgs.add(x.msg); r.issues.push(x); } }));
+    if(gaps) r.issues.push({ lvl:'warn', msg:'空き時間 ' + gaps + 'コマ' });
+    const cnt = r.items.length;
+    if(cnt > k) r.issues.push({ lvl:'bad', msg:cnt + '件入っています（' + k + '件まで）' });
+    const hasBad = r.issues.some(x => x.lvl === 'bad'), hasWarn = r.issues.some(x => x.lvl === 'warn');
+    r.status = k === 0 && cnt === 0 ? 'skip' : cnt === 0 ? 'none' : hasBad ? 'bad' : cnt < k ? 'partial' : hasWarn ? 'warn' : 'ok';
+    if(cnt > 0 && cnt < k) r.issues.push({ lvl:'info', msg:'残り' + (k-cnt) + '件' });
+    if(cnt === k && !hasBad){ done++; r.score += c.bp ? (r.bpPlaced ? 60 : 15) : 10; if(c.bp && r.bpPlaced) bpDone++; }
+    if(c.bp && k > 0) bpTot++;
+    if(cnt) placed++;
+    if(hasBad) bad++;
+    total += r.score;
+  }
+  return { G, k, cands, ixIss, done, bad, bpTot, bpDone, total, placed, gaps:gapsAll, wishRate: wishTot ? wishHit/wishTot : 1, wishTot, wishHit };
+}
+App.evaluate = evaluate;
+const STATUS_LABEL = { skip:'面談なし', ok:'OK', warn:'注意', bad:'要修正', partial:'途中', none:'未配置' };
+App.STATUS_LABEL = STATUS_LABEL;
+App.statusPill = st => '<span class="pill ' + st + '">' + STATUS_LABEL[st] + '</span>';
+App.issuesHtml = list => list.length ? '<div class="iss">' + list.map(x => '<span class="pill ' + x.lvl + '">' + esc(x.msg) + '</span>').join('') + '</div>' : '';
+
+/* ---------- option generation & solver ---------- */
+function occOf(asg){ const o = { i:new Set(), c:new Set() }; asg.forEach(a => { o.i.add(a.iid+'|'+a.slot); o.c.add(a.cid+'|'+a.slot); }); return o; }
+function combos(arr, k){ const out = []; const cur = []; const rec = s => { if(cur.length === k){ out.push(cur.slice()); return; } for(let i = s; i < arr.length; i++){ cur.push(arr[i]); rec(i+1); cur.pop(); } }; rec(0); return out; }
+function perms(arr){ if(arr.length <= 1) return [arr.slice()]; const out = []; arr.forEach((x,i) => perms(arr.slice(0,i).concat(arr.slice(i+1))).forEach(p => out.push([x].concat(p)))); return out; }
+function options(c, occ, G, onlyCount){
+  const k = need(c);
+  if(k === 0) return onlyCount ? 0 : [];
+  const ivs = S.interviewers.filter(i => ip(c, i.id) !== 'ng');
+  if(ivs.length < k) return onlyCount ? 0 : [];
+  const ic = []; combos(ivs, k).forEach(cb => perms(cb).forEach(p => ic.push(p)));
+  let n = 0; const out = [];
+  for(const g of G.sessions){
+    const av = avail(c, g.key); if(av === 'ng' || g.slots.length < k) continue;
+    const noBp = av === 'nobp' && c.bp;
+    const free = g.slots.filter(s => !occ.c.has(c.id+'|'+s.key));
+    let sc = combos(free, k); if(free.length > 9) sc = sc.filter(x => x[k-1].idx - x[0].idx <= k+1);
+    for(const ss of sc){
+      let gaps = 0; for(let i = 1; i < k; i++) gaps += ss[i].idx - ss[i-1].idx - 1;
+      for(const p of ic){
+        let ok = true; for(let i = 0; i < k; i++){ if(occ.i.has(p[i].id+'|'+ss[i].key)){ ok = false; break; } }
+        if(!ok) continue;
+        n++; if(onlyCount) continue;
+        let pr = 0, avd = 0; p.forEach(i => { const v = ip(c, i.id); if(v === 'pref') pr++; else if(v === 'avoid') avd++; });
+        out.push({ g:g.key, items:ss.map((s,i) => ({ iid:p[i].id, slot:s.key })), score:(av==='pref'?3:0) + 2*pr - 3*avd - 2*gaps - (noBp ? 40 : 0), pr, avd, gaps, noBp, sessPref:av==='pref' });
+      }
+    }
+  }
+  if(onlyCount) return n;
+  out.sort((a,b) => b.score - a.score || a.items[0].slot.localeCompare(b.items[0].slot));
+  return out;
+}
+function diffCount(a, b){ const s = new Set(a.map(x => x.cid+x.iid+x.slot)); return b.filter(x => !s.has(x.cid+x.iid+x.slot)).length; }
+function solve(){
+  const G = grid(); const locked = new Set(S.locked || []);
+  const base = S.assignments.filter(a => locked.has(a.cid));
+  const free = S.candidates.filter(c => !locked.has(c.id));
+  const occ0 = occOf(base); const diff = {}; free.forEach(c => diff[c.id] = options(c, occ0, G, true));
+  const found = new Map(); const t0 = performance.now(); let it = 0;
+  while(it < 800 && (it < 5 || performance.now() - t0 < 900)){
+    const occ = occOf(base), asg = base.slice(), un = [];
+    const order = free.map(c => [c, (c.bp ? 0 : 100) + Math.log(1 + diff[c.id]) + (it ? Math.random()*1.2 : 0)]).sort((a,b) => a[1]-b[1]).map(x => x[0]);
+    for(const c of order){
+      const op = options(c, occ, G);
+      if(!op.length){ un.push(c.id); continue; }
+      const slack = it === 0 ? 0 : (Math.random() < .3 ? 2 : 0);
+      const tier = op.filter(o => o.score >= op[0].score - slack).slice(0, 60);
+      const pk = it === 0 ? tier[0] : tier[Math.floor(Math.random()*tier.length)];
+      pk.items.forEach(x => { asg.push({ cid:c.id, iid:x.iid, slot:x.slot }); occ.i.add(x.iid+'|'+x.slot); occ.c.add(c.id+'|'+x.slot); });
+    }
+    const sig = asg.map(a => a.cid+a.iid+a.slot).sort().join(',');
+    if(!found.has(sig)){ const E = evaluate(asg, G); const unBp = un.filter(id => cand(id)?.bp).length; found.set(sig, { asg, un, E, key: -(E.bpTot - E.bpDone)*100000 - unBp*50000 - un.length*1000 - E.bad*500 + E.total }); }
+    it++;
+  }
+  const list = [...found.values()].sort((a,b) => b.key - a.key);
+  const pick = [];
+  for(const p of list){ if(pick.length >= 3) break; if(pick.every(q => diffCount(q.asg, p.asg) >= Math.max(2, Math.ceil(p.asg.length*.25)))) pick.push(p); }
+  for(const p of list){ if(pick.length >= 3) break; if(!pick.includes(p)) pick.push(p); }
+  return { plans:pick, tried:it, lockedCount:locked.size };
+}
+Object.assign(App, { occOf, options, solve });
+
+/* ---------- mutation helpers ---------- */
+function prune(){
+  const G = grid(); const before = S.assignments.length;
+  const ivs = new Set(S.interviewers.map(i => i.id)), cs = new Set(S.candidates.map(c => c.id));
+  S.assignments = S.assignments.filter(a => G.map[a.slot] && ivs.has(a.iid) && cs.has(a.cid));
+  S.locked = (S.locked || []).filter(id => cs.has(id));
+  const lost = before - S.assignments.length;
+  if(lost > 0) toast('設定の変更に合わせて ' + lost + ' 件の配置を外しました');
+}
+function commit(){ prune(); save(); render(); }
+function toast(msg){
+  let t = document.getElementById('toast');
+  if(!t){ t = document.createElement('div'); t.id = 'toast'; t.className = 'toast'; t.setAttribute('role','status'); document.body.appendChild(t); }
+  t.textContent = msg; t.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(() => t.hidden = true, 2600);
+}
+Object.assign(App, { commit, toast, save });
+
+/* ---------- views: shell ---------- */
+const TABS = [['schedule', PAGE.scheduleTab || 'スケジュール'], ['people','候補者'], ['settings','時間とコマ'], ['export','現在の配置を出力する'], ['resume','配置の続きを行う'], ['help','使い方']];
+function shell(E){
+  const n = S.candidates.length;
+  return '<div class="wrap"><header class="top"><div class="brand"><h1>' + esc(PAGE.name) + '</h1><p>' + esc(PAGE.lead) + '</p></div>'
+    + '<div class="topright"><div class="pdfgroup"><button class="btn pri pdfmain" data-act="pdf">印刷プレビュー</button></div>'
+    + '</div></header>'
+    + '<nav class="tabs" role="tablist">' + TABS.map(([k,l]) => '<button class="tab" role="tab" id="tab-' + k + '" aria-selected="' + (App.tab === k) + '" data-act="tab" data-tab="' + k + '">' + l + '</button>').join('') + '</nav>'
+    + '<main id="view">' + (S.isSample ? '<div class="banner"><span>サンプルの候補者12人（BPあり9人・BPなし3人）と受入側3社（11/6・11/7の2日間）を表示しています。自分のデータに置き換えるには「候補者」と「時間とコマ」を編集してください。</span><span class="row"><button class="btn sm" data-act="keepSample">このまま試す</button>' + armBtn('clearAll','x','空の状態から始める','btn sm') + '</span></div>' : '')
+    + view(E) + '</main></div>';
+}
+function view(E){
+  if(App.tab === 'people') return peopleView(E);
+  if(App.tab === 'settings') return settingsView(E);
+  if(App.tab === 'help') return helpView(E);
+  if(App.tab === 'export') return exportView(E);
+  if(App.tab === 'resume') return resumeView(E);
+  return PAGE.renderSchedule(E);
+}
+function render(){
+  const scrolls = [...document.querySelectorAll('.scroll')].map(el => el.scrollLeft);
+  const E = evaluate(S.assignments); App.E = E;
+  document.getElementById('app').innerHTML = shell(E);
+  document.querySelectorAll('.scroll').forEach((el,i) => { if(scrolls[i]) el.scrollLeft = scrolls[i]; });
+  if(App.tab === 'schedule' && PAGE.after) PAGE.after(E);
+}
+App.render = render;
+
+/* ---------- views: auto plan panel (shared) ---------- */
+let AUTO_OPEN = true; try{ AUTO_OPEN = localStorage.getItem('mensetsu-auto') !== '0'; }catch(e){}
+App.autoPanel = function(E){
+  const P = App.plans;
+  if(!AUTO_OPEN) return '<section class="panel autobar"><div class="spread" style="align-items:center"><h2 style="margin:0">自動で割当案を作る</h2><button class="btn sm" data-act="toggleAuto" aria-expanded="false">表示する</button></div></section>';
+  let h = '<section class="panel"><div class="spread"><div><div class="row" style="gap:10px"><h2 style="margin:0">自動で割当案を作る</h2><button class="btn sm" data-act="toggleAuto" aria-expanded="true">隠す</button></div><p class="sub">空き時間・重複・面談不可を守ったうえで、①ブックプロポーザル（BP）ありの人を最優先で希望の時間帯に入れ、②次に希望日時、③面談相手の希望の順に考慮した案を3つ出します。固定した候補者はそのまま残します。</p></div>'
+    + '<button class="btn pri" data-act="autoRun">' + (P ? '案を作り直す' : '案を作る') + '</button></div>';
+  if(P){
+    if(!P.plans.length) h += '<p class="sub">案を作れませんでした。候補者か面談相手を登録してください。</p>';
+    h += '<div class="plans">' + P.plans.map((p,i) => {
+      const n = S.candidates.length;
+      return '<div class="plan ' + (i===0 ? 'best' : '') + '"><div class="spread"><h3>案' + (i+1) + '</h3>' + (i===0 ? '<span class="pill partial">おすすめ</span>' : '') + '</div>'
+        + '<dl><dt>BPあり</dt><dd>' + p.E.bpDone + '/' + p.E.bpTot + '人</dd><dt>全体</dt><dd>' + p.E.done + '/' + n + '人</dd><dt>希望の充足</dt><dd>' + Math.round(p.E.wishRate*100) + '%</dd><dt>空き時間</dt><dd>' + p.E.gaps + 'コマ</dd><dt>スコア</dt><dd>' + p.E.total + '</dd></dl>'
+        + (p.un.length ? '<div class="un">配置できない: ' + p.un.map(id => esc(cand(id)?.name) + (cand(id)?.bp ? '（BP）' : '')).join('、') + '</div>' : '')
+        + '<button class="btn" data-act="planLoad" data-i="' + i + '">この案を読み込む</button></div>';
+    }).join('') + '</div><p class="sub" style="margin:10px 0 0">' + P.tried + '通りを試しました' + (P.lockedCount ? '・固定中の' + P.lockedCount + '人はそのまま' : '') + '。読み込むと今の配置は置き換わります。</p>';
+  }
+  return h + '</section>';
+};
+
+/* ---------- views: people ---------- */
+function peopleView(E){
+  const G = E.G;
+  let h = '<section class="panel"><div class="spread"><div><h2>候補者と希望</h2><p class="sub">記号をタップすると切り替わります。BPは「あり／なし」。時間帯は「◎希望・○可・△BPなしなら可（BPありの人のみ）・×不可」、面談相手は「◎希望・○どちらでも・△避けたい・×不可」。</p></div><button class="btn pri" data-act="addCand">候補者を追加</button></div>';
+  h += '<div class="csvbox"><div><b>CSVから読み込む</b>'
+    + (App.csvReport ? '<p class="sub" style="margin:4px 0 0">前回: ' + App.csvReport.added + '人追加・' + App.csvReport.updated + '人更新、時間帯の列 ' + App.csvReport.sess + ' 件を対応付け' + (App.csvReport.any ? '。BPあり ' + App.csvReport.bpN + '人（うちBPなしでも可 ' + App.csvReport.noBpOk + '人）・BPなし ' + App.csvReport.freeN + '人' + (App.csvReport.noneN ? '・どの枠も0の人 ' + App.csvReport.noneN + '人' : '') : '。「Any available slot without your Book Proposal」列が見つからないため、全員をBPありとして読み込みました') + (App.csvReport.unknown.length ? '。対応付けできなかった列: ' + App.csvReport.unknown.map(esc).join('、') : '') + '</p>' : '')
+    + '</div>'
+    + '<div class="row"><label class="row" style="gap:4px;font-size:13px"><input type="radio" name="csvmode" id="csvmode-add" value="add"' + (App.csvMode !== 'replace' ? ' checked' : '') + '>今の候補者に追加</label>'
+    + '<label class="row" style="gap:4px;font-size:13px"><input type="radio" name="csvmode" id="csvmode-rep" value="replace"' + (App.csvMode === 'replace' ? ' checked' : '') + '>置き換える</label>'
+    + '<input type="file" id="csvFile" accept=".csv,text/csv"></div></div>';
+  if(!S.candidates.length) h += '<p class="sub">まだ候補者がいません。「候補者を追加」かCSVから登録してください。</p>';
+  else {
+    h += '<div class="scroll"><table class="pt ptwide"><thead><tr><th>名前</th><th>BP</th>'
+      + G.sessions.map((g,i) => '<th class="' + (i===0?'grp':'') + '">' + esc(g.label) + '</th>').join('')
+      + S.interviewers.map((v,i) => '<th class="' + (i===0?'grp':'') + '"><span class="dot" style="--ic:' + ivColor(v.id) + '"></span><br><span title="' + esc(v.name) + '">' + esc(v.short || v.name) + '</span></th>').join('')
+      + '<th class="grp memoc">メモ</th><th></th></tr></thead><tbody>';
+    App.ordered().forEach(c => {
+      const r = E.cands[c.id];
+      h += '<tr><td><input class="name" type="text" id="cn-' + c.id + '" data-cn="' + c.id + '" value="' + esc(c.name) + '" aria-label="名前"></td>'
+        + '<td><button class="bptog ' + (c.bp ? 'on' : '') + '" data-act="togBp" data-c="' + c.id + '" aria-pressed="' + c.bp + '" title="ブックプロポーザルの有無">' + (c.bp ? 'あり' : 'なし') + '</button></td>'
+        + G.sessions.map((g,i) => { const v = avail(c, g.key); return '<td class="' + (i===0?'grp':'') + '"><button class="cyc ' + v + '" data-act="cycAv" data-c="' + c.id + '" data-g="' + g.key + '" title="' + esc(g.label) + ': ' + AV_LABEL[v] + '">' + MARK[v] + '</button></td>'; }).join('')
+        + S.interviewers.map((v,i) => { const p = ip(c, v.id); return '<td class="' + (i===0?'grp':'') + '"><button class="cyc ' + p + '" data-act="cycIp" data-c="' + c.id + '" data-i="' + v.id + '" title="' + esc(v.name) + ': ' + IP_LABEL[p] + '">' + MARK[p] + '</button></td>'; }).join('')
+        + '<td class="grp memoc"><input class="memo" type="text" id="cm-' + c.id + '" data-cmemo="' + c.id + '" value="' + esc(c.note) + '" title="' + esc(c.note) + '" aria-label="メモ"></td>'
+        + '<td>' + armBtn('rmCand', c.id, '削除', 'btn sm danger') + '</td></tr>';
+    });
+    h += '</tbody></table></div>';
+  }
+  return h + '</section>';
+}
+function armBtn(act, id, label, cls){
+  const key = act + ':' + id; const on = App.armed === key;
+  return '<button class="' + cls + (on ? ' armed' : '') + '" data-act="' + act + '" data-id="' + esc(id) + '" data-confirm="1">' + (on ? 'もう一度押すと' + label : label) + '</button>';
+}
+App.armBtn = armBtn;
+
+/* ---------- views: settings ---------- */
+function settingsView(E){
+  const G = E.G, k = K(), nIv = S.interviewers.length;
+  let h = '<div class="list setwide">';
+  h += '<section class="panel"><h2>日程と時間帯</h2><p class="sub">候補者は1つの時間帯（例: 午前）の中で ' + k + ' 人と面談します。</p><div class="hrow"><div class="hgrp">'
+    + '<div class="hlab">日程</div><div class="hitems">'
+    + S.settings.days.map(d => '<div class="li"><input type="date" id="day-' + d.id + '" data-day="' + d.id + '" value="' + esc(d.date) + '" aria-label="日付">' + (S.settings.days.length > 1 ? armBtn('rmDay', d.id, '削除', 'btn sm danger') : '') + '</div>').join('')
+    + '<button class="btn sm" data-act="addDay">日程を追加</button></div></div>'
+    + '<div class="hgrp"><div class="hlab">時間帯</div><div class="hitems">'
+    + S.settings.sessions.map(se => '<div class="li"><input type="text" id="sl-' + se.id + '" data-sess="' + se.id + '" data-f="label" value="' + esc(se.label) + '" style="width:5em" aria-label="時間帯の名前"><input type="time" step="300" id="ss-' + se.id + '" data-sess="' + se.id + '" data-f="start" value="' + esc(se.start) + '" aria-label="開始"><span class="muted">〜</span><input type="time" step="300" id="se-' + se.id + '" data-sess="' + se.id + '" data-f="end" value="' + esc(se.end) + '" aria-label="終了">' + (S.settings.sessions.length > 1 ? armBtn('rmSess', se.id, '削除', 'btn sm danger') : '') + '</div>').join('')
+    + '<button class="btn sm" data-act="addSess">時間帯を追加</button></div></div></div></section>';
+
+  h += '<section class="panel"><h2>コマの長さと間隔</h2><p class="sub">変更すると下のコマ一覧がすぐ変わります。はみ出した配置は外れます。</p><div class="fields">'
+    + '<label class="f">1コマ（分）<input type="number" min="5" max="180" step="5" id="set-slot" data-set="slotMin" value="' + (+S.settings.slotMin) + '"></label>'
+    + '<label class="f">間隔（分）<input type="number" min="0" max="120" step="5" id="set-gap" data-set="gapMin" value="' + (+S.settings.gapMin) + '"></label>'
+    + '<label class="f">1人あたりの面談数（×を付けた相手の数だけ減ります）<input type="number" min="1" max="' + Math.max(1,nIv) + '" id="set-k" data-set="perCandidate" value="' + k + '"></label></div>';
+  if(k > nIv) h += '<p class="note">面談数（' + k + '）が面談相手の人数（' + nIv + '）より多いため割り当てられません。</p>';
+  h += '<div class="list" style="margin-top:14px">' + G.sessions.map(g => {
+    const cap = Math.min(Math.floor(g.slots.length * nIv / k), g.slots.length >= k ? Infinity : 0);
+    return '<div><div class="slotline"><b style="min-width:6em">' + esc(g.label) + '</b>' + (g.slots.length ? g.slots.map(s => '<span class="s">' + fmt(s.start) + '–' + fmt(s.end) + '</span>').join('') : '<span class="pill bad">コマが入りません</span>') + '</div>'
+      + '<div class="cap">' + g.slots.length + 'コマ · この時間帯に入れられるのは最大 ' + (isFinite(cap) ? cap : 0) + ' 人</div></div>';
+  }).join('') + '</div>';
+  const needTot = S.candidates.reduce((s,c) => s + need(c), 0), capAll = G.sessions.reduce((s,g) => s + g.slots.length*nIv, 0);
+  h += '<p class="' + (capAll < needTot ? 'note' : 'cap') + '" style="margin-top:10px">全体の目安: 面談枠 ' + capAll + ' 件 / 必要な面談 ' + needTot + ' 件（×の分は差し引き済み）' + (capAll < needTot ? '。枠が足りません。コマを短くするか、時間帯か日程を増やしてください。' : '') + '</p></section>';
+
+  h += '<section class="panel"><div class="spread"><div><h2>面談相手（受入側）</h2><p class="sub">Cambridge University Press・Springer・Bloomsbury Publishing の3社で固定しています。略称は表やブロックの中で使います。必要なら追加・名前の変更もできます。</p></div><span class="row"><button class="btn sm" data-act="addIv">面談相手を追加</button>' + armBtn('resetIv','x','3社に戻す','btn sm') + '</span></div><div class="list">'
+    + S.interviewers.map(v => '<div class="li"><span class="dot" style="--ic:' + ivColor(v.id) + '"></span><input type="text" id="ivs-' + v.id + '" data-ivs="' + v.id + '" value="' + esc(v.short || '') + '" placeholder="略称" aria-label="略称" style="width:8em"><input type="text" id="iv-' + v.id + '" data-iv="' + v.id + '" value="' + esc(v.name) + '" aria-label="面談相手の名前">' + armBtn('rmIv', v.id, '削除', 'btn sm danger') + '</div>').join('')
+    + '</div></section>';
+  return h + '</div>';
+}
+
+/* ---------- views: data ---------- */
+function csv(){
+  const E = evaluate(S.assignments);
+  const rows = [['候補者','時間帯','順番','開始','終了','面談相手']];
+  S.candidates.forEach(c => E.cands[c.id].items.forEach(it => {
+    const g = E.G.gmap[it.sl.g];
+    rows.push([c.name, g.label, it.n, fmt(it.sl.start), fmt(it.sl.end), iv(it.a.iid)?.name || '']);
+  }));
+  return rows.map(r => r.map(x => /[",\n]/.test(String(x)) ? '"' + String(x).replace(/"/g,'""') + '"' : x).join(',')).join('\n');
+}
+/* ---------- views: export / resume ---------- */
+const FRAMED = (() => { try{ return window.self !== window.top; }catch(e){ return true; } })();
+function stampStr(d){ const p = n => String(n).padStart(2,'0'); return d.getFullYear() + p(d.getMonth()+1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes()); }
+function fmtDate(iso){ const d = new Date(iso); if(isNaN(d)) return '不明'; return d.getFullYear() + '/' + (d.getMonth()+1) + '/' + d.getDate() + ' ' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0'); }
+function exportData(){ return Object.assign({ app:'mensetsu', format:1, savedAt:new Date().toISOString(), savedFrom:PAGE.name }, JSON.parse(JSON.stringify(S))); }
+function summaryOf(o){
+  const ids = new Set((o.candidates || []).map(c => c.id));
+  const placed = new Set((o.assignments || []).filter(a => ids.has(a.cid)).map(a => a.cid));
+  return { cands:(o.candidates || []).length, bp:(o.candidates || []).filter(c => c.bp !== false).length, placed:placed.size, asg:(o.assignments || []).length,
+    days:(o.settings?.days || []).map(d => dayLabel(d.date)).join('・'), ivs:(o.interviewers || []).map(v => v.short || v.name).join('・'), slot:o.settings?.slotMin, gap:o.settings?.gapMin, savedAt:o.savedAt, from:o.savedFrom };
+}
+function summaryTable(m){
+  return '<dl class="sumdl">'
+    + (m.savedAt ? '<dt>保存日時</dt><dd>' + esc(fmtDate(m.savedAt)) + (m.from ? '（' + esc(m.from) + '）' : '') + '</dd>' : '')
+    + '<dt>候補者</dt><dd>' + m.cands + '人（BPあり ' + m.bp + '人）</dd>'
+    + '<dt>配置済み</dt><dd>' + m.placed + '人・' + m.asg + '件</dd>'
+    + '<dt>日程</dt><dd>' + esc(m.days || '—') + '</dd>'
+    + '<dt>受入側</dt><dd>' + esc(m.ivs || '—') + '</dd>'
+    + '<dt>コマ</dt><dd>' + (m.slot ?? '—') + '分＋間隔' + (m.gap ?? '—') + '分</dd></dl>';
+}
+function exportView(E){
+  const m = summaryOf(S);
+  return '<div class="list">'
+    + '<section class="panel pdfpanel"><h2>現在の配置を出力する</h2><p class="sub">候補者・希望・時間とコマの設定・配置のすべてを、1つのJSONファイルに保存します。あとで「配置の続きを行う」タブでこのファイルを読み込むと、今の状態から作業を再開できます。別のパソコンや、もう一方の画面（カード配置／ガント調整）でも読み込めます。</p>'
+    + summaryTable(m)
+    + '<div class="row" style="margin-top:14px"><button class="btn pri pdfmain" data-act="dlJson">JSONファイルをダウンロード</button><span class="muted" style="font-size:12px">ファイル名: mensetsu-' + stampStr(new Date()) + '.json</span></div>'
+    + (FRAMED ? '<p class="note" style="margin-top:12px">この画面ではブラウザの制限でダウンロードできません。ダウンロード版のHTMLを開いて使ってください。</p>' : '')
+    + '</section>'
+    + '</div>';
+}
+App.pending = null;
+function resumeView(){
+  const P = App.pending;
+  let h = '<div class="list"><section class="panel pdfpanel"><h2>配置の続きを行う</h2><p class="sub">「現在の配置を出力する」で保存したJSONファイルを選んでください。<b>.json ファイルのみ</b>読み込めます。</p>'
+    + '<label class="dropz" id="dropz" for="resumeFile"><input type="file" id="resumeFile" accept=".json,application/json"><b>JSONファイルを選ぶ</b><span>またはここへドラッグ＆ドロップ</span></label>';
+  if(P && P.error) h += '<p class="note" style="margin-top:12px">' + esc(P.error) + '</p>';
+  if(P && P.data){
+    h += '<div class="pend"><h3>' + esc(P.name) + '</h3>' + summaryTable(summaryOf(P.data))
+      + '<p class="sub" style="margin:8px 0">読み込むと、今この画面にある候補者と配置は置き換わります。必要なら先に「現在の配置を出力する」で保存してください。</p>'
+      + '<div class="row"><button class="btn pri" data-act="resumeApply">この内容で続きを始める</button><button class="btn" data-act="resumeCancel">やめる</button></div></div>';
+  }
+  h += '</section></div>';
+  return h;
+}
+function readResumeFile(file){
+  App.pending = null;
+  if(!file){ return; }
+  if(!/\.json$/i.test(file.name) || (file.type && !/json/i.test(file.type))){ App.pending = { error:'「' + file.name + '」は読み込めません。拡張子が .json のファイルを選んでください。' }; render(); return; }
+  if(file.size > 5 * 1024 * 1024){ App.pending = { error:'ファイルが大きすぎます（5MBまで）。' }; render(); return; }
+  const r = new FileReader();
+  r.onload = () => {
+    let o;
+    try{ o = JSON.parse(String(r.result).replace(/^﻿/, '')); }catch(e){ App.pending = { error:'「' + file.name + '」はJSONとして読めませんでした。ファイルが壊れていないか確認してください。' }; render(); return; }
+    if(!o || typeof o !== 'object' || !o.settings || !Array.isArray(o.candidates) || !Array.isArray(o.interviewers)){ App.pending = { error:'「' + file.name + '」はこのツールの保存データではありません。「現在の配置を出力する」で作ったファイルを選んでください。' }; render(); return; }
+    App.pending = { name:file.name, data:o }; render();
+  };
+  r.onerror = () => { App.pending = { error:'ファイルを読み込めませんでした。' }; render(); };
+  r.readAsText(file);
+}
+/* ---------- views: help ---------- */
+function helpView(){
+  const step = (n, t, body) => '<li class="hs"><span class="hn">' + n + '</span><div><h3>' + t + '</h3>' + body + '</div></li>';
+  const go = (tab, label) => '<button class="btn sm" data-act="tab" data-tab="' + tab + '">' + label + '</button>';
+  return '<div class="help">'
+    + '<section class="panel"><h2>使い方</h2><p class="sub">ブックプロポーザル面談（11/6・11/7、受入側3社）の時間割を作り、PDFで配るまでの流れです。上から順に進めてください。</p>'
+    + '<ol class="steps">'
+    + step(1, '候補者をCSVで読み込む', '<p>' + go('people','候補者') + ' タブの「CSVから読み込む」でファイルを選びます。列は <code>Name</code>・4つの時間帯（<i>… with your Book Proposal</i>）・<code>Any available slot without your Book Proposal</code>・<code>Memo</code>。1 が○、0 が×として入ります。初回は「置き換える」を選ぶとサンプルが消えます。</p>')
+    + step(2, '希望を確認・追加する', '<p>同じタブの表で記号をタップすると切り替わります。特に希望の強い時間帯は ◎ に、会えない受入側は × にします。× を付けた数だけ、その人の面談数が減ります。BPの「あり／なし」もここで直せます。</p>')
+    + step(3, '時間とコマを確かめる', '<p>' + go('settings','時間とコマ') + ' タブで、1コマの長さと間隔を決めます。下に出る「面談枠 ○件 / 必要な面談 ○件」で枠が足りるか確認できます。</p>')
+    + step(4, '自動で割当案を作る', '<p>' + go('schedule', esc(PAGE.scheduleTab || 'スケジュール')) + ' タブの「案を作る」を押し、良さそうな案の「この案を読み込む」を押します。BPありの人が最優先、次に希望日時、次に受入側の希望の順で組まれます。</p>')
+    + step(5, '手で仕上げる', PAGE.helpAdjust || '')
+    + step(6, 'PDFで出力する', '<p>画面右上の <b>印刷プレビュー</b> を押すと、出力イメージが大きく表示されます。日ごとの時間割・候補者別一覧・面談相手別から出力する内容を選び、タイトルを確かめてから「印刷／PDFに保存」を押し、送信先で「PDFに保存」を選びます。</p>')
+    + '</ol></section>'
+    + '<div class="grid2">'
+    + '<section class="panel"><h2>記号の意味</h2><table class="htab"><tbody>'
+    + '<tr><th>◎</th><td>希望（時間帯・受入側）</td></tr>'
+    + '<tr><th>○</th><td>参加できる／どちらでもよい</td></tr>'
+    + '<tr><th>△</th><td>時間帯：BPなしなら参加できる（BPありの人だけ）<br>受入側：できれば避けたい</td></tr>'
+    + '<tr><th>×</th><td>参加できない／面談しない</td></tr>'
+    + '<tr><th><span class="bp on">BP</span></th><td>ブックプロポーザルあり（優先して配置）</td></tr>'
+    + '</tbody></table></section>'
+    + '<section class="panel"><h2>状態の表示</h2><table class="htab"><tbody>'
+    + '<tr><th><span class="pill ok">OK</span></th><td>必要な件数がそろい、問題なし</td></tr>'
+    + '<tr><th><span class="pill warn">注意</span></th><td>避けたい相手・空き時間・BPなしの時間帯など</td></tr>'
+    + '<tr><th><span class="pill bad">要修正</span></th><td>重複・参加できない時間帯・面談不可の相手など</td></tr>'
+    + '<tr><th><span class="pill partial">途中</span></th><td>まだ件数が足りない</td></tr>'
+    + '<tr><th><span class="pill">未配置</span></th><td>まだ1件も入っていない</td></tr>'
+    + '</tbody></table></section>'
+    + '<section class="panel"><h2>知っておくと便利なこと</h2><ul class="tips">'
+    + '<li>1人の面談は、午前か午後のどちらか1つの時間帯の中に収めます。</li>'
+    + '<li>「固定する」を押した人は、自動で案を作り直してもそのまま残ります。</li>'
+    + '<li>「リセット」でその人の割り当てだけを外せます。全員を外すときは「全員リセット」（2回押し）。</li>'
+    + '<li>入力内容はこのブラウザに自動で保存されます。作業を中断・引き継ぐときは ' + go('export','現在の配置を出力する') + ' でJSONファイルを保存し、' + go('resume','配置の続きを行う') + ' で読み込むと続きから再開できます。</li>'
+    + '</ul></section>'
+    + '</div></div>';
+}
+
+/* ---------- actions ---------- */
+const A = App.actions;
+A.toggleAuto = () => { AUTO_OPEN = !AUTO_OPEN; try{ localStorage.setItem('mensetsu-auto', AUTO_OPEN ? '1' : '0'); }catch(e){} render(); };
+A.dlJson = () => {
+  if(FRAMED){ toast('この画面ではダウンロードできません。ダウンロード版のHTMLで使ってください'); return; }
+  try{
+    const blob = new Blob([JSON.stringify(exportData(), null, 1)], { type:'application/json' });
+    const url = URL.createObjectURL(blob), a = document.createElement('a');
+    a.href = url; a.download = 'mensetsu-' + stampStr(new Date()) + '.json'; document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
+    toast('JSONファイルを保存しました');
+  }catch(e){ toast('ダウンロードできませんでした'); }
+};
+A.resumeApply = () => {
+  const P = App.pending; if(!P || !P.data) return;
+  const o = JSON.parse(JSON.stringify(P.data)); delete o.app; delete o.format; delete o.savedAt; delete o.savedFrom;
+  S = normalize(o); S.isSample = false; App.plans = null; App.sel = null; App.pending = null; App.tab = 'schedule'; commit();
+  toast('「' + P.name + '」を読み込みました。続きから作業できます');
+};
+A.resumeCancel = () => { App.pending = null; render(); };
+A.tab = el => { App.tab = el.dataset.tab; App.sel = null; render(); };
+A.keepSample = () => { S.isSample = false; commit(); };
+A.clearAll = () => { S = blank(); App.plans = null; App.sel = null; App.tab = 'people'; commit(); toast('空の状態にしました'); };
+A.resetSample = () => { S = sample(); App.plans = null; App.sel = null; commit(); toast('サンプルに戻しました'); };
+A.clearAsg = () => { S.assignments = []; S.locked = []; App.sel = null; commit(); toast('配置をすべて外しました'); };
+A.cycAv = el => { const c = cand(el.dataset.c); const v = avail(c, el.dataset.g); const cy = c.bp ? CYCLE_AV_BP : CYCLE_AV; c.avail[el.dataset.g] = cy[(Math.max(0, cy.indexOf(v))+1) % cy.length]; S.isSample = false; commit(); };
+A.togBp = el => { const c = cand(el.dataset.c); c.bp = !c.bp; if(!c.bp) for(const k in c.avail) if(c.avail[k] === 'nobp') c.avail[k] = 'ok'; App.plans = null; S.isSample = false; commit(); };
+A.cycIp = el => { const c = cand(el.dataset.c); const v = ip(c, el.dataset.i); c.ipref[el.dataset.i] = CYCLE_IP[(CYCLE_IP.indexOf(v)+1) % CYCLE_IP.length]; S.isSample = false; commit(); };
+A.addCand = () => { const n = S.candidates.length + 1; S.candidates.push({ id:uid('c'), name:'候補者' + n, bp:true, avail:{}, ipref:{}, note:'' }); S.isSample = false; commit(); };
+A.rmCand = el => { S.candidates = S.candidates.filter(c => c.id !== el.dataset.id); commit(); };
+A.addIv = () => { S.interviewers.push({ id:uid('i'), name:'面談相手' + (S.interviewers.length+1), short:'' }); commit(); };
+A.resetIv = () => { S.interviewers = FIXED_IV(); commit(); toast('面談相手を3社に戻しました'); };
+A.rmIv = el => { S.interviewers = S.interviewers.filter(v => v.id !== el.dataset.id); if(+S.settings.perCandidate > S.interviewers.length) S.settings.perCandidate = Math.max(1, S.interviewers.length); commit(); };
+A.addDay = () => { const last = S.settings.days[S.settings.days.length-1]; let d = ''; try{ const x = new Date(last.date + 'T00:00:00'); x.setDate(x.getDate()+1); d = x.getFullYear() + '-' + String(x.getMonth()+1).padStart(2,'0') + '-' + String(x.getDate()).padStart(2,'0'); }catch(e){} S.settings.days.push({ id:uid('d'), date:d }); commit(); };
+A.rmDay = el => { S.settings.days = S.settings.days.filter(d => d.id !== el.dataset.id); commit(); };
+A.addSess = () => { S.settings.sessions.push({ id:uid('s'), label:'夕方', start:'17:00', end:'18:00' }); commit(); };
+A.rmSess = el => { S.settings.sessions = S.settings.sessions.filter(s => s.id !== el.dataset.id); commit(); };
+A.autoRun = () => { App.plans = solve(); render(); };
+A.planLoad = el => { const p = App.plans?.plans[+el.dataset.i]; if(!p) return; S.assignments = p.asg.map(a => ({...a})); App.sel = null; commit(); toast('案' + (+el.dataset.i+1) + 'を読み込みました'); };
+A.resetCand = el => { const id = el.dataset.c; const c = cand(id); S.assignments = S.assignments.filter(a => a.cid !== id); S.locked = S.locked.filter(x => x !== id); App.sel = null; commit(); toast((c ? c.name + 'さんの' : '') + '割り当てをリセットしました'); };
+A.lock = el => { const id = el.dataset.c; const s = new Set(S.locked); s.has(id) ? s.delete(id) : s.add(id); S.locked = [...s]; commit(); };
+A.copy = el => {
+  const ta = document.getElementById(el.dataset.t); if(!ta) return;
+  const fallback = () => { ta.focus(); ta.select(); toast('選択しました。コピーしてください'); };
+  try{ navigator.clipboard.writeText(ta.value).then(() => toast('コピーしました'), fallback); }catch(e){ fallback(); }
+};
+function importText(t){
+  try{ const o = JSON.parse(t); if(!o.settings || !o.candidates || !o.interviewers) throw 0; S = normalize(o); S.isSample = false; App.plans = null; App.sel = null; commit(); toast('読み込みました'); }
+  catch(e){ toast('読み込めませんでした。保存用データ（JSON）をそのまま貼り付けてください'); }
+}
+function parseCsv(t){
+  t = t.replace(/^﻿/, '');
+  const rows = []; let row = [], f = '', q = false;
+  for(let i = 0; i < t.length; i++){
+    const ch = t[i];
+    if(q){ if(ch === '"'){ if(t[i+1] === '"'){ f += '"'; i++; } else q = false; } else f += ch; }
+    else if(ch === '"') q = true;
+    else if(ch === ',' ){ row.push(f); f = ''; }
+    else if(ch === '\n' || ch === '\r'){ if(ch === '\r' && t[i+1] === '\n') i++; row.push(f); rows.push(row); row = []; f = ''; }
+    else f += ch;
+  }
+  if(f !== '' || row.length){ row.push(f); rows.push(row); }
+  return rows.filter(r => r.some(x => x.trim() !== ''));
+}
+function decode(buf){
+  try{ return new TextDecoder('utf-8', { fatal:true }).decode(buf); }
+  catch(e){ try{ return new TextDecoder('shift_jis').decode(buf); }catch(e2){ return new TextDecoder().decode(buf); } }
+}
+/* map a CSV header such as "Friday morning (Nov. 6) with your Book Proposal" to a time band key */
+function headerToSession(h, G){
+  const t = h.toLowerCase();
+  let part = /morning|午前|\bam\b/.test(t) ? 'am' : /afternoon|午後|\bpm\b/.test(t) ? 'pm' : null;
+  if(!part) return null;
+  const MON = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+  const WD = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+  const md = t.match(/(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s*(\d{1,2})/) || t.match(/(\d{1,2})\s*[\/月]\s*(\d{1,2})/);
+  let day = null;
+  S.settings.days.forEach(d => {
+    const x = new Date(d.date + 'T00:00:00'); if(isNaN(x)) return;
+    if(md){
+      const m = isNaN(+md[1]) ? MON.indexOf(md[1]) + 1 : +md[1];
+      if(m === x.getMonth()+1 && +md[2] === x.getDate()) day = d;
+    } else if(t.includes(WD[x.getDay()])) day = d;
+  });
+  if(!day) return null;
+  const se = S.settings.sessions.find(q => part === 'am' ? toMin(q.start) < 12*60 : toMin(q.start) >= 12*60);
+  return se ? day.id + '_' + se.id : null;
+}
+function importCandidatesCsv(text){
+  const rows = parseCsv(text);
+  if(!rows.length){ toast('CSVが空です'); return; }
+  const head = rows[0].map(x => x.trim());
+  const col = head.findIndex(h => h.toLowerCase() === 'name');
+  if(col < 0){ toast('1行目に「Name」の見出しが見つかりません'); return; }
+  const memoCols = head.map((h,i) => /^memo/i.test(h) ? i : -1).filter(i => i >= 0);
+  const memoCol = memoCols.length ? memoCols[0] : -1;
+  const G = grid();
+  const sessCols = [], unknown = [];
+  const anyCol = head.findIndex(h => /without/i.test(h) && /any/i.test(h));
+  head.forEach((h,i) => { if(i === col || memoCols.includes(i) || i === anyCol || !h) return; const k = headerToSession(h, G); if(k) sessCols.push([i,k]); else unknown.push(h); });
+  const replace = App.csvMode === 'replace';
+  if(replace){ S.candidates = []; S.assignments = []; S.locked = []; }
+  let added = 0, updated = 0, bpN = 0, freeN = 0, noneN = 0, noBpOk = 0;
+  rows.slice(1).forEach(r => {
+    const name = (r[col] || '').trim(); if(!name) return;
+    let c = S.candidates.find(x => x.name === name);
+    if(c) updated++; else { c = { id:uid('c'), name, bp:true, avail:{}, ipref:{}, note:'' }; S.candidates.push(c); added++; }
+    const val = i => String(r[i] ?? '').trim();
+    const hasBp = sessCols.some(([i]) => val(i) === '1');
+    const anyOk = anyCol >= 0 && val(anyCol) === '1';
+    c.bp = anyCol >= 0 ? hasBp : true;
+    if(c.bp){
+      sessCols.forEach(([i,k]) => {
+        const v = val(i);
+        if(v === '1'){ if(c.avail[k] !== 'pref') c.avail[k] = 'ok'; }
+        else if(v === '0') c.avail[k] = anyOk ? 'nobp' : 'ng';
+      });
+      if(anyOk) noBpOk++; bpN++;
+    } else {
+      G.sessions.forEach(g => { if(anyOk){ if(c.avail[g.key] !== 'pref') c.avail[g.key] = 'ok'; } else c.avail[g.key] = 'ng'; });
+      if(anyOk) freeN++; else noneN++;
+    }
+    if(memoCols.length){ const memo = memoCols.map(i => String(r[i] ?? '').trim()).filter(Boolean).join(' / '); if(memo) c.note = memo; }
+  });
+  if(!added && !updated){ toast('Name列に名前がありません'); return; }
+  S.isSample = false; App.plans = null; App.sel = null; commit();
+  App.csvReport = { added, updated, sess:sessCols.length, unknown, any:anyCol >= 0, bpN, freeN, noneN, noBpOk };
+  render();
+  toast(added + '人を追加' + (updated ? '・' + updated + '人を更新' : '') + '（BPあり ' + bpN + '人・BPなし ' + freeN + '人' + (noneN ? '・参加枠なし ' + noneN + '人' : '') + '）');
+}
+A.importJson = () => importText(document.getElementById('jsonIn').value);
+
+document.addEventListener('click', ev => {
+  const el = ev.target.closest('[data-act]'); if(!el) return;
+  const act = el.dataset.act, fn = A[act]; if(!fn) return;
+  if(el.dataset.confirm){
+    const key = act + ':' + (el.dataset.id || '');
+    if(App.armed !== key){ App.armed = key; render(); clearTimeout(A._arm); A._arm = setTimeout(() => { if(App.armed === key){ App.armed = null; render(); } }, 4000); return; }
+    App.armed = null;
+  }
+  fn(el, ev);
+});
+document.addEventListener('change', ev => {
+  const el = ev.target, d = el.dataset;
+  if(el.id === 'resumeFile'){ readResumeFile(el.files[0]); return; }
+  if(el.name === 'csvmode'){ App.csvMode = el.value; return; }
+  if(el.id === 'csvFile' && el.files[0]){ const r = new FileReader(); r.onload = () => importCandidatesCsv(decode(new Uint8Array(r.result))); r.readAsArrayBuffer(el.files[0]); return; }
+  if(el.id === 'jsonFile' && el.files[0]){ const r = new FileReader(); r.onload = () => importText(r.result); r.readAsText(el.files[0]); return; }
+  if(d.cn){ cand(d.cn).name = el.value.trim() || '名前なし'; S.isSample = false; commit(); }
+  else if(d.cmemo){ cand(d.cmemo).note = el.value; save(); }
+  else if(d.iv){ iv(d.iv).name = el.value.trim() || '名前なし'; commit(); }
+  else if(d.ivs){ iv(d.ivs).short = el.value.trim(); commit(); }
+  else if(d.day){ S.settings.days.find(x => x.id === d.day).date = el.value; commit(); }
+  else if(d.sess){ S.settings.sessions.find(x => x.id === d.sess)[d.f] = el.value; commit(); }
+  else if(d.set){ let v = Math.round(+el.value || 0); if(d.set === 'slotMin') v = Math.max(5, v); if(d.set === 'gapMin') v = Math.max(0, v); if(d.set === 'perCandidate') v = Math.max(1, Math.min(Math.max(1,S.interviewers.length), v)); S.settings[d.set] = v; App.plans = null; commit(); }
+});
+
+
+/* ---------- PDF report ---------- */
+App.rp = { grid:true, list:true, iv:false };
+const STATUS_EN = { skip:'no interviews', ok:'OK', warn:'check', bad:'needs fixing', partial:'incomplete', none:'unassigned' };
+const SESS_EN = { '午前':'Morning', '午後':'Afternoon', '夕方':'Evening' };
+function dayEn(ds){
+  if(!ds) return 'Date not set';
+  const d = new Date(ds + 'T00:00:00'); if(isNaN(d)) return ds;
+  return ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()] + ', ' + ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()] + ' ' + d.getDate();
+}
+const sessEn = s => SESS_EN[s] || s;
+const ordEn = n => n + (n % 10 === 1 && n % 100 !== 11 ? 'st' : n % 10 === 2 && n % 100 !== 12 ? 'nd' : n % 10 === 3 && n % 100 !== 13 ? 'rd' : 'th');
+function reportHtml(){
+  const E = evaluate(S.assignments), G = E.G, o = App.rp;
+  const title = (!S.title || S.title === '面談スケジュール') ? 'Interview Schedule' : S.title;
+  const bpEn = (c, gk) => !c ? '' : c.bp ? (gk && avail(c, gk) === 'nobp' ? 'Yes (without BP this time)' : 'Yes') : 'No';
+  const gLabel = g => (S.settings.days.length > 1 ? dayEn(g.day.date) + ' ' : '') + sessEn(g.se.label);
+  const now = new Date();
+  const stamp = now.getFullYear() + '/' + (now.getMonth()+1) + '/' + now.getDate() + ' ' + String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+  const notDone = S.candidates.filter(c => ['none','partial','bad'].includes(E.cands[c.id].status));
+  const ivName = id => esc(ivShort(id));
+  let body = '';
+  const head = '<header><h1>' + esc(title) + '</h1><div class="meta"><sup class="bpm">BP</sup> = with Book Proposal / ' + S.interviewers.filter(v => v.short && v.short !== v.name).map(v => esc(v.short) + ' = ' + esc(v.name)).join(', ') + ' / Slot ' + (+S.settings.slotMin) + ' min, gap ' + (+S.settings.gapMin) + ' min / ' + S.candidates.length + ' candidates / Generated ' + stamp + '</div></header>'
+    + (notDone.length ? '<p class="warn">Incomplete / needs fixing: ' + notDone.map(c => esc(c.name) + ' (' + STATUS_EN[E.cands[c.id].status] + ')').join(', ') + '</p>' : '');
+  if(o.grid){
+    S.settings.days.forEach((d, di) => {
+      const gs = G.sessions.filter(g => g.day.id === d.id && g.slots.length);
+      if(!gs.length) return;
+      body += '<section class="page">' + head + '<h2>' + esc(dayEn(d.date)) + '</h2><div class="sessions">';
+      gs.forEach(g => {
+        body += '<div class="sess"><h3>' + esc(sessEn(g.se.label)) + ' (' + esc(g.se.start) + '–' + esc(g.se.end) + ')</h3><table class="tt"><thead><tr><th class="t">Time</th>' + S.interviewers.map(v => '<th>' + esc(v.name) + '</th>').join('') + '</tr></thead><tbody>';
+        g.slots.forEach(sl => {
+          body += '<tr><th class="t">' + fmt(sl.start) + '<br><small>–' + fmt(sl.end) + '</small></th>' + S.interviewers.map(v => {
+            const here = S.assignments.filter(a => a.iid === v.id && a.slot === sl.key);
+            return '<td>' + here.map(a => { const c = cand(a.cid); if(!c) return ''; const nb = c.bp && avail(c, sl.g) === 'nobp'; return esc(c.name) + (c.bp && !nb ? '<sup class="bpm">BP</sup>' : ''); }).join('<br>') + '</td>';
+          }).join('') + '</tr>';
+        });
+        body += '</tbody></table></div>';
+      });
+      body += '</div></section>';
+    });
+  }
+  if(o.list){
+    body += '<section class="page">' + head + '<h2>By Candidate</h2><table class="list"><thead><tr><th>Candidate</th><th>BP</th><th>Session</th>' + Array.from({length:K()}, (_,i) => '<th>' + ordEn(i+1) + ' interview</th>').join('') + '</tr></thead><tbody>';
+    const rows = S.candidates.map(c => ({ c, r:E.cands[c.id] })).sort((a,b) => (a.r.items[0]?.sl.gidx ?? 1e9) - (b.r.items[0]?.sl.gidx ?? 1e9));
+    rows.forEach(({c, r}) => {
+      const g = r.items[0] ? G.gmap[r.items[0].sl.g] : null;
+      const bpTxt = bpEn(c, g && g.key);
+      body += '<tr><td class="nm">' + esc(c.name) + '</td><td class="bpc">' + bpTxt + '</td><td>' + (g ? esc(gLabel(g)) : '<span class="muted">Unassigned</span>') + '</td>'
+        + Array.from({length:K()}, (_,i) => { const it = r.items[i]; return '<td>' + (it ? '<b>' + fmt(it.sl.start) + '</b> ' + ivName(it.a.iid) : '') + '</td>'; }).join('') + '</tr>';
+    });
+    body += '</tbody></table></section>';
+  }
+  if(o.iv){
+    S.interviewers.forEach(v => {
+      const items = S.assignments.filter(a => a.iid === v.id && G.map[a.slot]).map(a => ({ a, sl:G.map[a.slot] })).sort((x,y) => x.sl.gidx - y.sl.gidx);
+      body += '<section class="page">' + head + '<h2>' + esc(v.name) + '</h2>';
+      G.sessions.forEach(g => {
+        const gi = items.filter(x => x.sl.g === g.key);
+        if(!gi.length) return;
+        body += '<div class="ivg"><h3>' + esc(dayEn(g.day.date)) + ' · ' + esc(sessEn(g.se.label)) + ' (' + esc(g.se.start) + '–' + esc(g.se.end) + ')</h3><table class="list"><thead><tr><th class="tm">Time</th><th>Candidate</th><th class="bpc">BP</th></tr></thead><tbody>'
+          + gi.map(x => '<tr><td class="tm"><b>' + fmt(x.sl.start) + '</b>–' + fmt(x.sl.end) + '</td><td class="nm">' + esc(cand(x.a.cid)?.name) + '</td><td class="bpc">' + bpEn(cand(x.a.cid), x.sl.g) + '</td></tr>').join('')
+          + '</tbody></table></div>';
+      });
+      if(!items.length) body += '<p class="muted">No interviews assigned.</p>';
+      body += '</section>';
+    });
+  }
+  if(!body) body = '<section class="page">' + head + '<p>Select at least one section to output.</p></section>';
+  const css = '@page{size:A4 landscape;margin:12mm}*{box-sizing:border-box}html,body{margin:0;background:#fff;color:#111}body{font-family:"Yu Gothic","YuGothic","Hiragino Sans","Meiryo",sans-serif;font-size:10.5pt;line-height:1.4;-webkit-print-color-adjust:exact;print-color-adjust:exact}'
+    + '.page{padding:0;page-break-after:always;break-after:page}.page:last-child{page-break-after:auto;break-after:auto}'
+    + '@media screen{body{background:#e9ebef;padding:16px}.page{background:#fff;width:273mm;min-height:186mm;margin:0 auto 16px;padding:12mm;box-shadow:0 2px 10px rgba(0,0,0,.15)}}'
+    + 'header{display:flex;justify-content:space-between;align-items:baseline;border-bottom:2px solid #111;padding-bottom:4px;margin-bottom:8px}h1{font-size:14pt;margin:0}.meta{font-size:8.5pt;color:#555}'
+    + 'h2{font-size:13pt;margin:6px 0 8px}h3{font-size:11pt;margin:0 0 4px}.warn{font-size:9pt;color:#9b1c14;margin:0 0 6px}'
+    + '.sessions{display:flex;gap:8mm}.sess{flex:1;min-width:0}table{border-collapse:collapse;width:100%}th,td{border:1px solid #888;padding:4px 6px;vertical-align:middle}'
+    + 'thead th{background:#eef0f4;font-size:9.5pt}.tt td{text-align:center;height:13mm;font-weight:700;font-size:10.5pt}.tt th.t{width:17mm;text-align:center;font-size:9.5pt;background:#f6f7f9}.tt th.t small{font-weight:400;color:#555;font-size:8pt}'
+    + '.list td{font-size:10pt}.list .nm{font-weight:700;white-space:nowrap}.list .memo{font-size:8.5pt;color:#444}.bpm{font-size:6.5pt;font-weight:700;color:#1d4f9c;margin-left:2px;vertical-align:super}.bpc{font-size:9pt;white-space:nowrap}.muted{color:#888}.ivg{margin-bottom:6mm;break-inside:avoid;page-break-inside:avoid}.ivg .tm{width:30mm;white-space:nowrap}.ivg th.bpc{width:55mm}tr{page-break-inside:avoid;break-inside:avoid}';
+  return '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>' + esc(title) + '</title><style>' + css + '</style></head><body>' + body + '</body></html>';
+}
+function openReport(){
+  closeReport();
+  const dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches && document.documentElement.dataset.theme !== 'light' || document.documentElement.dataset.theme === 'dark';
+  const P = dark ? { bg:'#191e28', fg:'#e5e8ef', mu:'#9aa2b4', ln:'#454e63', ac:'#8eaeeb', on:'#0f131b', btn:'#222836' } : { bg:'#ffffff', fg:'#1a2030', mu:'#586174', ln:'#b5bdcc', ac:'#2b4a88', on:'#ffffff', btn:'#ffffff' };
+  const btn = (pri) => 'font:inherit;font-size:13px;font-weight:700;padding:7px 14px;border-radius:6px;cursor:pointer;border:1px solid ' + (pri ? P.ac : P.ln) + ';background:' + (pri ? P.ac : P.btn) + ';color:' + (pri ? P.on : P.fg);
+  const lab = 'display:inline-flex;align-items:center;gap:4px;font-size:13px;color:' + P.fg;
+  const ov = document.createElement('div'); ov.id = 'rpOverlay';
+  ov.setAttribute('style', 'position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:2vh 2vw;background:rgba(10,14,22,.55);font-family:"Zen Kaku Gothic New","Yu Gothic","Meiryo",sans-serif');
+  ov.innerHTML = '<div id="rpDialog" role="dialog" aria-modal="true" aria-label="PDFのプレビュー" style="width:min(1280px,96vw);height:94vh;display:flex;flex-direction:column;background:' + P.bg + ';color:' + P.fg + ';border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.35);overflow:hidden">'
+    + '<div style="display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid ' + P.ln + '">'
+    + '<div style="display:flex;flex-direction:column;min-width:0"><b style="font-size:17px">PDFのプレビュー</b><span style="font-size:12px;color:' + P.mu + '">「印刷／PDFに保存」を押し、送信先で「PDFに保存」を選んでください（A4横）。</span></div>'
+    + '<div style="display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center">'
+    + '<label style="' + lab + '"><input type="checkbox" id="rp-grid" data-rp="grid"' + (App.rp.grid ? ' checked' : '') + '>日ごとの時間割</label>'
+    + '<label style="' + lab + '"><input type="checkbox" id="rp-list" data-rp="list"' + (App.rp.list ? ' checked' : '') + '>候補者別一覧</label>'
+    + '<label style="' + lab + '"><input type="checkbox" id="rp-iv" data-rp="iv"' + (App.rp.iv ? ' checked' : '') + '>面談相手別</label>'
+    + '<input type="text" id="rp-title" value="' + esc(S.title && S.title !== '面談スケジュール' ? S.title : 'Interview Schedule') + '" aria-label="タイトル" style="font:inherit;font-size:13px;width:12em;padding:6px 8px;border-radius:6px;border:1px solid ' + P.ln + ';background:' + P.btn + ';color:' + P.fg + '">'
+    + '<button data-act="rpPrint" style="' + btn(true) + '">印刷／PDFに保存</button><button data-act="rpClose" style="' + btn(false) + '">閉じる</button></div></div>'
+    + '<iframe id="rpFrame" title="PDFのプレビュー" style="flex:1;width:100%;border:0;background:#e9ebef"></iframe></div>';
+  document.body.appendChild(ov);
+  document.body.style.overflow = 'hidden';
+  ov.addEventListener('click', e => { if(e.target === ov) closeReport(); });
+  document.getElementById('rpFrame').srcdoc = reportHtml();
+  setTimeout(() => { const b = ov.querySelector('[data-act=rpPrint]'); if(b) b.focus(); }, 0);
+}
+function closeReport(){ const o = document.getElementById('rpOverlay'); if(o){ o.remove(); document.body.style.overflow = ''; } }
+document.addEventListener('keydown', e => { if(e.key === 'Escape' && document.getElementById('rpOverlay')) closeReport(); });
+A.pdf = () => openReport();
+const framed = (() => { try{ return window.self !== window.top; }catch(e){ return true; } })();
+A.pdfNow = () => {
+  if(framed){ openReport(); toast('この画面では印刷画面を開けないため、プレビューを表示しました。ダウンロード版ではすぐPDF保存画面が開きます'); return; }
+  const old = document.getElementById('rpHidden'); if(old) old.remove();
+  const f = document.createElement('iframe'); f.id = 'rpHidden'; f.title = 'PDF出力'; f.setAttribute('aria-hidden','true');
+  f.style.cssText = 'position:fixed;left:-20000px;top:0;width:1123px;height:794px;border:0';
+  document.body.appendChild(f);
+  let d;
+  try{ d = f.contentDocument; d.open(); d.write(reportHtml()); d.close(); }
+  catch(e){ f.remove(); openReport(); return; }
+  const go = () => {
+    if(!d.querySelector('.page')){ f.remove(); openReport(); return; }
+    try{ f.contentWindow.focus(); f.contentWindow.print(); }catch(e){ openReport(); }
+  };
+  if(d.fonts && d.fonts.ready) d.fonts.ready.then(() => setTimeout(go, 50)); else setTimeout(go, 200);
+};
+A.rpClose = () => closeReport();
+A.rpPrint = () => {
+  const f = document.getElementById('rpFrame');
+  try{ if(!f.contentDocument || !f.contentDocument.querySelector('.page')) throw 0; f.contentWindow.focus(); f.contentWindow.print(); }
+  catch(e){
+    try{ const w = window.open('', '_blank'); w.document.write(reportHtml()); w.document.close(); w.focus(); setTimeout(() => w.print(), 300); }
+    catch(e2){ toast('このブラウザでは印刷画面を開けませんでした。ダウンロード版で試してください'); }
+  }
+};
+document.addEventListener('change', ev => {
+  const el = ev.target;
+  if(el.dataset && el.dataset.rp){ App.rp[el.dataset.rp] = el.checked; const f = document.getElementById('rpFrame'); if(f) f.srcdoc = reportHtml(); }
+  else if(el.id === 'rp-title'){ S.title = el.value.trim() || 'Interview Schedule'; save(); const f = document.getElementById('rpFrame'); if(f) f.srcdoc = reportHtml(); }
+});
+
+/* ---------- pointer drag (mouse + touch) ---------- */
+App.pointerDrag = function(o){
+  let st = null, suppress = false, over = null;
+  const cleanup = () => { document.querySelectorAll('.ghost').forEach(g => g.remove()); if(over) over.classList.remove('dropover'); over = null; document.body.classList.remove('pdrag'); };
+  document.addEventListener('pointerdown', e => {
+    if(e.button !== 0) return; const el = e.target.closest(o.handle); if(!el || e.target.closest('button:not(' + o.handle + ')')) return;
+    st = { el, x:e.clientX, y:e.clientY, on:false, id:e.pointerId };
+  });
+  document.addEventListener('pointermove', e => {
+    if(!st || e.pointerId !== st.id) return;
+    if(!st.on){
+      if(Math.hypot(e.clientX - st.x, e.clientY - st.y) < 6) return;
+      if(o.start(st.el) === false){ st = null; return; }
+      st.on = true; const r = st.el.getBoundingClientRect();
+      st.ghost = st.el.cloneNode(true); st.ghost.classList.add('ghost'); st.ghost.style.width = r.width + 'px';
+      st.dx = st.x - r.left; st.dy = st.y - r.top; document.body.appendChild(st.ghost); document.body.classList.add('pdrag');
+    }
+    e.preventDefault();
+    st.ghost.style.transform = 'translate(' + (e.clientX - st.dx) + 'px,' + (e.clientY - st.dy) + 'px)';
+    const t = document.elementFromPoint(e.clientX, e.clientY), z = t && t.closest(o.zone);
+    if(z !== over){ if(over) over.classList.remove('dropover'); over = z; if(z) z.classList.add('dropover'); }
+  }, { passive:false });
+  document.addEventListener('pointerup', e => {
+    if(!st || e.pointerId !== st.id) return; const s = st; st = null;
+    if(!s.on) return;
+    const t = document.elementFromPoint(e.clientX, e.clientY), z = t && t.closest(o.zone);
+    cleanup(); suppress = true; setTimeout(() => suppress = false, 50);
+    o.drop(z, s.el);
+  });
+  document.addEventListener('pointercancel', () => { const on = st && st.on; st = null; cleanup(); if(on && o.cancel) o.cancel(); });
+  window.addEventListener('blur', () => { if(st && st.on){ st = null; cleanup(); o.cancel && o.cancel(); } });
+  document.addEventListener('click', e => { if(suppress){ e.stopPropagation(); e.preventDefault(); suppress = false; } }, true);
+};
+
+document.addEventListener('dragover', e => { const z = e.target.closest && e.target.closest('#dropz'); if(z){ e.preventDefault(); z.classList.add('over'); } });
+document.addEventListener('dragleave', e => { const z = e.target.closest && e.target.closest('#dropz'); if(z) z.classList.remove('over'); });
+document.addEventListener('drop', e => { const z = e.target.closest && e.target.closest('#dropz'); if(!z) return; e.preventDefault(); z.classList.remove('over'); const fs = e.dataTransfer && e.dataTransfer.files; if(fs && fs.length > 1){ App.pending = { error:'ファイルは1つだけ選んでください。' }; render(); return; } readResumeFile(fs && fs[0]); });
+
+App.start = function(){
+  S = normalize(load() || sample());
+  if(PAGE.init) PAGE.init();
+  render();
+};
+})();
+
+</script>
+<script>
+(function(){
+'use strict';
+window.PAGE.helpAdjust = '<p>左の候補者の名前を表のマスへドラッグすると配置されます（タップで選んでからマスをタップしても可）。置いたカードはドラッグで別のマスへ動かせ、埋まっているマスなら入れ替わります。左の一覧へ戻すと外れます。候補者を選ぶと、置けるマスが緑、注意が黄、置けないマスが斜線で表示されます。</p>';
+const A = App.actions, esc = App.esc;
+
+function candInfo(E, cid){
+  const c = App.cand(cid), r = E.cands[cid]; if(!c) return '';
+  const locked = App.S.locked.includes(cid);
+  const av = E.G.sessions.map(g => { const v = App.avail(c, g.key); return '<span class="chip ' + (v === 'nobp' ? 'avoid' : v) + '">' + esc(g.label) + ' ' + App.MARK[v] + (v === 'nobp' ? ' BPなし' : '') + '</span>'; }).join('');
+  const ps = App.S.interviewers.filter(v => App.ip(c, v.id) !== 'ok').map(v => { const p = App.ip(c, v.id); return '<span class="chip ' + p + '">' + esc(v.short || v.name) + ' ' + App.MARK[p] + '</span>'; }).join('');
+  return '<div class="selbar"><div class="spread"><div><b class="selname">' + esc(c.name) + '</b> ' + App.bpBadge(c) + ' ' + App.statusPill(r.status) + '' + '</div>'
+    + '<div class="row">' + (App.sel.type === 'card' ? '<button class="btn sm danger" data-act="rmCard">このカードを外す</button>' : '')
+    + (r.items.length ? '<button class="btn sm" data-act="resetCand" data-c="' + cid + '">この人をリセット</button>' : '')
+    + '<button class="btn sm ' + (locked ? 'on' : '') + '" data-act="lock" data-c="' + cid + '">' + (locked ? '固定中' : '固定する') + '</button>'
+    + '<button class="btn sm" data-act="unsel">選択をやめる</button></div></div>'
+    + '<div class="chips" style="margin-top:6px">' + av + ps + '</div>'
+    + (c.note ? '<div class="selmemo"><span class="selmemo-l">メモ</span><span class="selmemo-t">' + esc(c.note) + '</span></div>' : '')
+    + (r.issues.length ? '<div style="margin-top:6px">' + App.issuesHtml(r.issues) + '</div>' : '')
+    + (App.sel.type === 'cand' ? '<p class="hint">表の緑のマスをタップ（またはドラッグ）すると配置します。</p>' : '') + '</div>';
+}
+
+App.PAGE_render = null;
+App.trayDoneOpen = false;
+document.addEventListener('toggle', e => { if(e.target.id === 'trayDone') App.trayDoneOpen = e.target.open; }, true);
+window.PAGE.renderSchedule = function(E){
+  const S = App.S, k = E.k, sel = App.sel;
+  const selCid = sel ? (sel.type === 'cand' ? sel.cid : S.assignments[sel.ix]?.cid) : null;
+  let h = App.autoPanel(E);
+  h += '<div class="a-layout"><aside class="panel tray" data-drop="tray"><div class="spread"><h2>候補者</h2>' + (S.assignments.length ? App.armBtn('clearAsg','x','全員リセット','btn sm danger') : '') + '</div><p class="sub">名前を表のマスへドラッグ（またはタップして選び、マスをタップ）。置いたカードもドラッグで動かせます。ここへ戻すと外れます。</p><div class="tray-list">';
+  if(!S.candidates.length) h += '<p class="sub">候補者タブから登録してください。</p>';
+  const isDone = c => { const r = E.cands[c.id]; return r.need > 0 && r.items.length >= r.need; };
+  const ord = App.ordered(), todo = ord.filter(c => !isDone(c)), done = ord.filter(isDone);
+  const chip = c => {
+    const r = E.cands[c.id], need = r.need - r.items.length, locked = S.locked.includes(c.id);
+    return '<div class="cchip ' + (selCid === c.id ? 'sel' : '') + '" role="button" tabindex="0" data-act="selCand" data-c="' + c.id + '">'
+      + '<span class="nm">' + esc(c.name) + ' ' + App.bpBadge(c) + (locked ? ' <small>固定</small>' : '') + '</span>'
+      + '<span class="need num">' + (r.need === 0 ? '面談なし' : need > 0 ? '残り' + need + '/' + r.need : '済') + '</span>' + App.statusPill(r.status)
+      + (r.items.length ? '<button class="btn sm reset" data-act="resetCand" data-c="' + c.id + '" title="' + esc(c.name) + 'さんの割り当てをすべて外す">リセット</button>' : '')
+      + '</div>';
+  };
+  let lastBp = null;
+  todo.forEach(c => {
+    if(c.bp !== lastBp){ lastBp = c.bp; h += '<div class="grp-l">' + (c.bp ? 'BPあり（優先）' : 'BPなし') + '</div>'; }
+    h += chip(c);
+  });
+  if(done.length) h += '<details class="done-grp" id="trayDone"' + (App.trayDoneOpen ? ' open' : '') + '><summary class="grp-l">配置済み（' + done.length + '人）</summary><div class="tray-list">' + done.map(chip).join('') + '</div></details>';
+  h += '</div></aside><section class="a-main">';
+  if(selCid) h += candInfo(E, selCid);
+  h += '<div class="sessions">';
+  E.G.sessions.forEach(g => {
+    h += '<div class="panel sess"><div class="spread"><h3>' + esc(g.label) + '</h3><span class="muted num" style="font-size:12px">' + g.slots.length + 'コマ</span></div>';
+    if(!g.slots.length){ h += '<p class="sub">この時間帯にはコマが入りません。</p></div>'; return; }
+    h += '<div class="scroll"><table class="tt"><thead><tr><th></th>' + S.interviewers.map(v => '<th><span class="dot" style="--ic:' + App.ivColor(v.id) + '"></span> <span title="' + esc(v.name) + '">' + esc(v.name) + '</span></th>').join('') + '</tr></thead><tbody>';
+    g.slots.forEach(sl => {
+      h += '<tr><th class="t num">' + App.fmt(sl.start) + '<small>' + App.fmt(sl.end) + '</small></th>';
+      S.interviewers.forEach(v => {
+        h += '<td class="cell" data-act="cell" data-i="' + v.id + '" data-s="' + sl.key + '" data-drop="cell" style="--ic:' + App.ivColor(v.id) + '">';
+        S.assignments.forEach((a, ix) => {
+          if(a.iid !== v.id || a.slot !== sl.key) return;
+          const c = App.cand(a.cid), r = E.cands[a.cid]; if(!c) return;
+          const it = r.items.find(x => x.ix === ix), iss = E.ixIss[ix] || [];
+          const lvl = iss.some(x => x.lvl === 'bad') ? 'bad' : iss.some(x => x.lvl === 'warn') ? 'warn' : '';
+          const p = App.ip(c, v.id);
+          const isSel = sel && ((sel.type === 'card' && sel.ix === ix));
+          h += '<div class="card ' + lvl + (isSel ? ' sel' : '') + (selCid === a.cid ? ' mine' : '') + '" data-act="selCard" data-ix="' + ix + '" title="' + esc(iss.map(x => x.msg).join(' / ')) + '">'
+            + '<span class="ord num">' + (it ? it.n : '') + '</span><b>' + esc(c.name) + '</b>' + (p === 'pref' ? '<span class="mk good">◎</span>' : p === 'avoid' ? '<span class="mk warn">△</span>' : p === 'ng' ? '<span class="mk bad">×</span>' : '')
+            + (S.locked.includes(a.cid) ? '<span class="lk">固定</span>' : '') + '</div>';
+        });
+        h += '</td>';
+      });
+      h += '</tr>';
+    });
+    h += '</tbody></table></div></div>';
+  });
+  h += '</div><p class="legend" style="margin-top:4px"><span>カードの数字＝その人の何件目か</span><span>◎ 希望の相手</span><span>△ 避けたい相手</span><span>赤い枠＝要修正</span></p></section></div>';
+  return h;
+};
+
+/* highlight cells without re-rendering (works during drag) */
+function highlight(){
+  const S = App.S, sel = App.sel, G = App.E.G;
+  const cells = document.querySelectorAll('td.cell');
+  if(!sel){ cells.forEach(td => { delete td.dataset.hl; td.removeAttribute('title'); }); return; }
+  const cid = sel.type === 'cand' ? sel.cid : S.assignments[sel.ix]?.cid; const c = App.cand(cid); if(!c) return;
+  cells.forEach(td => {
+    const iid = td.dataset.i, slot = td.dataset.s;
+    const occ = S.assignments.findIndex(a => a.iid === iid && a.slot === slot);
+    let hl, why = '';
+    if(sel.type === 'card' && occ === sel.ix){ hl = 'self'; }
+    else if(sel.type === 'cand' && occ >= 0){ hl = 'full'; why = '埋まっています'; }
+    else if(sel.type === 'card' && occ >= 0){ hl = 'swap'; why = '入れ替え'; }
+    else {
+      let asg, ix;
+      if(sel.type === 'cand'){ asg = S.assignments.concat([{ cid, iid, slot }]); ix = asg.length - 1; }
+      else { asg = S.assignments.map((a,i) => i === sel.ix ? { ...a, iid, slot } : a); ix = sel.ix; }
+      const E = App.evaluate(asg, G); const iss = E.ixIss[ix] || [];
+      if(iss.some(x => x.lvl === 'bad')){ hl = 'no'; why = iss.filter(x => x.lvl === 'bad').map(x => x.msg).join(' / '); }
+      else if(iss.length || E.cands[cid].gaps > App.E.cands[cid].gaps){ hl = 'meh'; why = iss.map(x => x.msg).concat(E.cands[cid].gaps > App.E.cands[cid].gaps ? ['空き時間が増えます'] : []).join(' / '); }
+      else { hl = App.ip(c, iid) === 'pref' ? 'best' : 'ok'; }
+    }
+    td.dataset.hl = hl; if(why) td.title = why; else td.removeAttribute('title');
+  });
+}
+window.PAGE.after = highlight;
+
+function place(iid, slot){
+  const S = App.S, sel = App.sel; if(!sel) return;
+  const occIx = S.assignments.findIndex(a => a.iid === iid && a.slot === slot);
+  if(sel.type === 'cand'){
+    const c = App.cand(sel.cid), cnt = S.assignments.filter(a => a.cid === sel.cid).length;
+    const nd = App.need(c); if(cnt >= nd){ App.toast(nd === 0 ? c.name + 'さんは全員×のため面談がありません' : c.name + 'さんは' + nd + '件とも配置済みです。カードを動かしてください'); return; }
+    if(occIx >= 0){ App.toast('このマスは埋まっています'); return; }
+    S.assignments.push({ cid:sel.cid, iid, slot });
+    if(cnt + 1 >= nd) App.sel = null;
+  } else {
+    const a = S.assignments[sel.ix]; if(!a){ App.sel = null; App.render(); return; }
+    if(occIx === sel.ix){ App.sel = null; App.render(); return; }
+    if(occIx >= 0){ const b = S.assignments[occIx]; b.iid = a.iid; b.slot = a.slot; }
+    a.iid = iid; a.slot = slot; App.sel = null;
+  }
+  App.commit();
+}
+
+A.selCand = el => { const cid = el.dataset.c; App.sel = (App.sel && App.sel.type === 'cand' && App.sel.cid === cid) ? null : { type:'cand', cid }; App.render(); };
+A.selCard = el => {
+  const ix = +el.dataset.ix, sel = App.sel;
+  if(sel && sel.type === 'card' && sel.ix === ix){ App.sel = null; App.render(); return; }
+  App.sel = { type:'card', ix }; App.render();
+};
+A.cell = el => {
+  if(!App.sel) return;
+  const occ = App.S.assignments.findIndex(a => a.iid === el.dataset.i && a.slot === el.dataset.s);
+  if(occ >= 0){ App.sel = (App.sel.type === 'card' && App.sel.ix === occ) ? null : { type:'card', ix:occ }; App.render(); return; }
+  place(el.dataset.i, el.dataset.s);
+};
+A.unsel = () => { App.sel = null; App.render(); };
+A.rmCard = () => { if(App.sel?.type !== 'card') return; App.S.assignments.splice(App.sel.ix, 1); App.sel = null; App.commit(); };
+A.clearCand = el => { const cid = el.dataset.c; App.S.assignments = App.S.assignments.filter(a => a.cid !== cid); App.sel = { type:'cand', cid }; App.commit(); };
+
+/* drag: mouse and touch */
+App.pointerDrag({
+  handle:'.card, .cchip',
+  zone:'td.cell, .tray',
+  start(el){
+    if(el.classList.contains('cchip')){
+      const cid = el.dataset.c, cnt = App.S.assignments.filter(a => a.cid === cid).length;
+      const nd = App.need(App.cand(cid)); if(cnt >= nd){ App.toast(App.cand(cid).name + (nd === 0 ? 'さんは面談がありません' : 'さんは' + nd + '件とも配置済みです。カードを動かしてください')); return false; }
+      App.sel = { type:'cand', cid };
+    } else App.sel = { type:'card', ix:+el.dataset.ix };
+    highlight();
+  },
+  drop(z){
+    if(!z){ App.sel = null; App.render(); return; }
+    if(z.matches('td.cell')) place(z.dataset.i, z.dataset.s);
+    else if(App.sel?.type === 'card'){ App.S.assignments.splice(App.sel.ix, 1); App.sel = null; App.commit(); App.toast('カードを外しました'); }
+    else { App.sel = null; App.render(); }
+  },
+  cancel(){ App.sel = null; App.render(); }
+});
+document.addEventListener('keydown', e => { if((e.key === 'Enter' || e.key === ' ') && e.target.matches('.cchip')){ e.preventDefault(); e.target.click(); } });
+
+App.start();
+})();
+
+</script>
+</body>
+</html>
