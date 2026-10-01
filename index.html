@@ -47,7 +47,7 @@ function dayLabel(ds){
 }
 
 /* ---------- state ---------- */
-const FIXED_IV = () => [{id:'i1',name:'Cambridge University Press',short:'CUP'},{id:'i2',name:'Springer',short:'Springer'},{id:'i3',name:'Bloomsbury Publishing',short:'Bloomsbury'}];
+const FIXED_IV = () => [{id:'i1',name:'Quillmere University Press',short:'QUP'},{id:'i2',name:'Ostrander & Finch',short:'Ostrander'},{id:'i3',name:'Larkspire Publishing',short:'Larkspire'}];
 function sample(){
   const C = (id,name,av,ip,note,bp) => ({ id, name, bp:bp !== false, avail:{ d1_am:av[0], d1_pm:av[1], d2_am:av[2], d2_pm:av[3] }, ipref:ip, note:note||'' });
   return {
@@ -370,7 +370,7 @@ function settingsView(E){
   const needTot = S.candidates.reduce((s,c) => s + need(c), 0), capAll = G.sessions.reduce((s,g) => s + g.slots.length*nIv, 0);
   h += '<p class="' + (capAll < needTot ? 'note' : 'cap') + '" style="margin-top:10px">全体の目安: 面談枠 ' + capAll + ' 件 / 必要な面談 ' + needTot + ' 件（×の分は差し引き済み）' + (capAll < needTot ? '。枠が足りません。コマを短くするか、時間帯か日程を増やしてください。' : '') + '</p></section>';
 
-  h += '<section class="panel"><div class="spread"><div><h2>面談相手（受入側）</h2><p class="sub">Cambridge University Press・Springer・Bloomsbury Publishing の3社で固定しています。略称は表やブロックの中で使います。必要なら追加・名前の変更もできます。</p></div><span class="row"><button class="btn sm" data-act="addIv">面談相手を追加</button>' + armBtn('resetIv','x','3社に戻す','btn sm') + '</span></div><div class="list">'
+  h += '<section class="panel"><div class="spread"><div><h2>面談相手（受入側）</h2><p class="sub">Quillmere University Press・Ostrander &amp; Finch・Larkspire Publishing の3社で固定しています。略称は表やブロックの中で使います。必要なら追加・名前の変更もできます。</p></div><span class="row"><button class="btn sm" data-act="addIv">面談相手を追加</button>' + armBtn('resetIv','x','3社に戻す','btn sm') + '</span></div><div class="list">'
     + S.interviewers.map(v => '<div class="li"><span class="dot" style="--ic:' + ivColor(v.id) + '"></span><input type="text" id="ivs-' + v.id + '" data-ivs="' + v.id + '" value="' + esc(v.short || '') + '" placeholder="略称" aria-label="略称" style="width:8em"><input type="text" id="iv-' + v.id + '" data-iv="' + v.id + '" value="' + esc(v.name) + '" aria-label="面談相手の名前">' + armBtn('rmIv', v.id, '削除', 'btn sm danger') + '</div>').join('')
     + '</div></section>';
   return h + '</div>';
