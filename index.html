@@ -659,11 +659,9 @@ function reportHtml(){
   const gLabel = g => (S.settings.days.length > 1 ? dayEn(g.day.date) + ' ' : '') + sessEn(g.se.label);
   const now = new Date();
   const stamp = now.getFullYear() + '/' + (now.getMonth()+1) + '/' + now.getDate() + ' ' + String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
-  const notDone = S.candidates.filter(c => ['none','partial','bad'].includes(E.cands[c.id].status));
   const ivName = id => esc(ivShort(id));
   let body = '';
-  const head = '<header><h1>' + esc(title) + '</h1><div class="meta"><sup class="bpm">BP</sup> = with Book Proposal / ' + S.interviewers.filter(v => v.short && v.short !== v.name).map(v => esc(v.short) + ' = ' + esc(v.name)).join(', ') + ' / Slot ' + (+S.settings.slotMin) + ' min, gap ' + (+S.settings.gapMin) + ' min / ' + S.candidates.length + ' candidates / Generated ' + stamp + '</div></header>'
-    + (notDone.length ? '<p class="warn">Incomplete / needs fixing: ' + notDone.map(c => esc(c.name) + ' (' + STATUS_EN[E.cands[c.id].status] + ')').join(', ') + '</p>' : '');
+  const head = '<header><h1>' + esc(title) + '</h1><div class="meta"><span class="nobpkey"></span> = without Book Proposal / ' + S.interviewers.filter(v => v.short && v.short !== v.name).map(v => esc(v.short) + ' = ' + esc(v.name)).join(', ') + ' / Slot ' + (+S.settings.slotMin) + ' min, gap ' + (+S.settings.gapMin) + ' min / ' + S.candidates.length + ' candidates / Generated ' + stamp + '</div></header>';
   if(o.grid){
     S.settings.days.forEach((d, di) => {
       const gs = G.sessions.filter(g => g.day.id === d.id && g.slots.length);
@@ -674,7 +672,9 @@ function reportHtml(){
         g.slots.forEach(sl => {
           body += '<tr><th class="t">' + fmt(sl.start) + '<br><small>–' + fmt(sl.end) + '</small></th>' + S.interviewers.map(v => {
             const here = S.assignments.filter(a => a.iid === v.id && a.slot === sl.key);
-            return '<td>' + here.map(a => { const c = cand(a.cid); if(!c) return ''; const nb = c.bp && avail(c, sl.g) === 'nobp'; return esc(c.name) + (c.bp && !nb ? '<sup class="bpm">BP</sup>' : ''); }).join('<br>') + '</td>';
+            const cs = here.map(a => cand(a.cid)).filter(Boolean);
+            const noBp = cs.length && cs.every(c => !c.bp || avail(c, sl.g) === 'nobp');
+            return '<td' + (noBp ? ' class="nobp"' : '') + '>' + cs.map(c => esc(c.name)).join('<br>') + '</td>';
           }).join('') + '</tr>';
         });
         body += '</tbody></table></div>';
@@ -716,7 +716,7 @@ function reportHtml(){
     + 'h2{font-size:13pt;margin:6px 0 8px}h3{font-size:11pt;margin:0 0 4px}.warn{font-size:9pt;color:#9b1c14;margin:0 0 6px}'
     + '.sessions{display:flex;gap:8mm}.sess{flex:1;min-width:0}table{border-collapse:collapse;width:100%}th,td{border:1px solid #888;padding:4px 6px;vertical-align:middle}'
     + 'thead th{background:#eef0f4;font-size:9.5pt}.tt td{text-align:center;height:13mm;font-weight:700;font-size:10.5pt}.tt th.t{width:17mm;text-align:center;font-size:9.5pt;background:#f6f7f9}.tt th.t small{font-weight:400;color:#555;font-size:8pt}'
-    + '.list td{font-size:10pt}.list .nm{font-weight:700;white-space:nowrap}.list .memo{font-size:8.5pt;color:#444}.bpm{font-size:6.5pt;font-weight:700;color:#1d4f9c;margin-left:2px;vertical-align:super}.bpc{font-size:9pt;white-space:nowrap}.muted{color:#888}.ivg{margin-bottom:6mm;break-inside:avoid;page-break-inside:avoid}.ivg .tm{width:30mm;white-space:nowrap}.ivg th.bpc{width:55mm}tr{page-break-inside:avoid;break-inside:avoid}';
+    + '.list td{font-size:10pt}.list .nm{font-weight:700;white-space:nowrap}.list .memo{font-size:8.5pt;color:#444}.tt td.nobp{background:#d4d6da}.nobpkey{display:inline-block;width:1.6em;height:.9em;background:#d4d6da;border:1px solid #888;vertical-align:-1px}.bpc{font-size:9pt;white-space:nowrap}.muted{color:#888}.ivg{margin-bottom:6mm;break-inside:avoid;page-break-inside:avoid}.ivg .tm{width:30mm;white-space:nowrap}.ivg th.bpc{width:55mm}tr{page-break-inside:avoid;break-inside:avoid}';
   return '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>' + esc(title) + '</title><style>' + css + '</style></head><body>' + body + '</body></html>';
 }
 function openReport(){
