@@ -17,7 +17,7 @@
 ダウンロードし直したときに「stylesheet (1).css」のように名前が変わっていないかも確認してください。
 </div>
 <script>window.addEventListener('load',function(){var v=getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();if(!v)document.getElementById('cssWarn').hidden=false;});</script>
-<script>window.PAGE={"key": "a", "kicker": "パターン 1＋2 · カード配置＋自動割当", "name": "面談カード配置", "lead": "候補者カードを時間×面談相手の表に置いて[...]
+<script>window.PAGE={"key": "a", "kicker": "パターン 1＋2 · カード配置＋自動割当", "name": "面談カード配置", "lead": "候補者カードを時間×面談相手の表に置いていく方式。自動で出した案を読み込んで、カードを動かして仕上げます。", "scheduleTab": "配置ボード"};</script>
 <script>
 (function(){
 'use strict';
@@ -234,7 +234,7 @@ function solve(){
       pk.items.forEach(x => { asg.push({ cid:c.id, iid:x.iid, slot:x.slot }); occ.i.add(x.iid+'|'+x.slot); occ.c.add(c.id+'|'+x.slot); });
     }
     const sig = asg.map(a => a.cid+a.iid+a.slot).sort().join(',');
-    if(!found.has(sig)){ const E = evaluate(asg, G); const unBp = un.filter(id => cand(id)?.bp).length; found.set(sig, { asg, un, E, key: -(E.bpTot - E.bpDone)*100000 - unBp*50000 - un.length*1000 - E.total }); }
+    if(!found.has(sig)){ const E = evaluate(asg, G); const unBp = un.filter(id => cand(id)?.bp).length; found.set(sig, { asg, un, E, key: -(E.bpTot - E.bpDone)*100000 - unBp*50000 - un.length*1000 - E.bad*500 + E.total }); }
     it++;
   }
   const list = [...found.values()].sort((a,b) => b.key - a.key);
@@ -263,14 +263,14 @@ function toast(msg){
 Object.assign(App, { commit, toast, save });
 
 /* ---------- views: shell ---------- */
-const TABS = [['schedule', PAGE.scheduleTab || 'スケジュール'], ['people','候補者'], ['settings','時間とコマ'], ['export','現在の配置を出力する'], ['resume','配置の続きを行う']];
+const TABS = [['schedule', PAGE.scheduleTab || 'スケジュール'], ['people','候補者'], ['settings','時間とコマ'], ['export','現在の配置を出力する'], ['resume','配置の続きを行う'], ['help','使い方']];
 function shell(E){
   const n = S.candidates.length;
   return '<div class="wrap"><header class="top"><div class="brand"><h1>' + esc(PAGE.name) + '</h1><p>' + esc(PAGE.lead) + '</p></div>'
     + '<div class="topright"><div class="pdfgroup"><button class="btn pri pdfmain" data-act="pdf">印刷プレビュー</button></div>'
     + '</div></header>'
     + '<nav class="tabs" role="tablist">' + TABS.map(([k,l]) => '<button class="tab" role="tab" id="tab-' + k + '" aria-selected="' + (App.tab === k) + '" data-act="tab" data-tab="' + k + '">' + l + '</button>').join('') + '</nav>'
-    + '<main id="view">' + (S.isSample ? '<div class="banner"><span>サンプルの候補者12人（BPあり9人・BPなし3人）と受入側3社（11/6・11/7の2日間）を表示しています。</span><button class="btn sm" data-act="keepSample">このまま使う</button></div>' : '')
+    + '<main id="view">' + (S.isSample ? '<div class="banner"><span>サンプルの候補者12人（BPあり9人・BPなし3人）と受入側3社（11/6・11/7の2日間）を表示しています。自分のデータに置き換えるには「候補者」と「時間とコマ」を編集してください。</span><span class="row"><button class="btn sm" data-act="keepSample">このまま試す</button>' + armBtn('clearAll','x','空の状態から始める','btn sm') + '</span></div>' : '')
     + view(E) + '</main></div>';
 }
 function view(E){
@@ -294,18 +294,18 @@ App.render = render;
 let AUTO_OPEN = true; try{ AUTO_OPEN = localStorage.getItem('mensetsu-auto') !== '0'; }catch(e){}
 App.autoPanel = function(E){
   const P = App.plans;
-  if(!AUTO_OPEN) return '<section class="panel autobar"><div class="spread" style="align-items:center"><h2 style="margin:0">自動で割当案を作る</h2><button class="btn sm" data-act="toggleAuto" aria-expanded="false">自動案を開く</button></div></section>';
-  let h = '<section class="panel"><div class="spread"><div><div class="row" style="gap:10px"><h2 style="margin:0">自動で割当案を作る</h2><button class="btn sm" data-act="toggleAuto" aria-expanded="true">自動案を閉じる</button></div></div>'
+  if(!AUTO_OPEN) return '<section class="panel autobar"><div class="spread" style="align-items:center"><h2 style="margin:0">自動で割当案を作る</h2><button class="btn sm" data-act="toggleAuto" aria-expanded="false">表示する</button></div></section>';
+  let h = '<section class="panel"><div class="spread"><div><div class="row" style="gap:10px"><h2 style="margin:0">自動で割当案を作る</h2><button class="btn sm" data-act="toggleAuto" aria-expanded="true">隠す</button></div><p class="sub">空き時間・重複・面談不可を守ったうえで、①ブックプロポーザル（BP）ありの人を最優先で希望の時間帯に入れ、②次に希望日時、③面談相手の希望の順に考慮した案を3つ出します。固定した候補者はそのまま残します。</p></div>'
     + '<button class="btn pri" data-act="autoRun">' + (P ? '案を作り直す' : '案を作る') + '</button></div>';
   if(P){
     if(!P.plans.length) h += '<p class="sub">案を作れませんでした。候補者か面談相手を登録してください。</p>';
     h += '<div class="plans">' + P.plans.map((p,i) => {
       const n = S.candidates.length;
       return '<div class="plan ' + (i===0 ? 'best' : '') + '"><div class="spread"><h3>案' + (i+1) + '</h3>' + (i===0 ? '<span class="pill partial">おすすめ</span>' : '') + '</div>'
-        + '<dl><dt>BPあり</dt><dd>' + p.E.bpDone + '/' + p.E.bpTot + '人</dd><dt>全体</dt><dd>' + p.E.done + '/' + n + '人</dd><dt>希望の充足</dt><dd>' + Math.round(p.E.wishRate*100) + '%</dd></dl>'
+        + '<dl><dt>BPあり</dt><dd>' + p.E.bpDone + '/' + p.E.bpTot + '人</dd><dt>全体</dt><dd>' + p.E.done + '/' + n + '人</dd><dt>希望の充足</dt><dd>' + Math.round(p.E.wishRate*100) + '%</dd><dt>空き時間</dt><dd>' + p.E.gaps + 'コマ</dd><dt>スコア</dt><dd>' + p.E.total + '</dd></dl>'
         + (p.un.length ? '<div class="un">配置できない: ' + p.un.map(id => esc(cand(id)?.name) + (cand(id)?.bp ? '（BP）' : '')).join('、') + '</div>' : '')
         + '<button class="btn" data-act="planLoad" data-i="' + i + '">この案を読み込む</button></div>';
-    }).join('') + '</div><p class="sub" style="margin:10px 0 0">' + P.tried + '通りを試しました' + (P.lockedCount ? '・固定中の' + P.lockedCount + '人はそのまま' : '') + '。読み込み後に微調整できます。</p>';
+    }).join('') + '</div><p class="sub" style="margin:10px 0 0">' + P.tried + '通りを試しました' + (P.lockedCount ? '・固定中の' + P.lockedCount + '人はそのまま' : '') + '。読み込むと今の配置は置き換わります。</p>';
   }
   return h + '</section>';
 };
@@ -313,12 +313,12 @@ App.autoPanel = function(E){
 /* ---------- views: people ---------- */
 function peopleView(E){
   const G = E.G;
-  let h = '<section class="panel"><div class="spread"><div><h2>候補者と希望</h2><p class="sub">記号をタップすると切り替わります。BPは「あり／なし」。時間帯は「◎／○／△／×」。</p></div></div>';
+  let h = '<section class="panel"><div class="spread"><div><h2>候補者と希望</h2><p class="sub">記号をタップすると切り替わります。BPは「あり／なし」。時間帯は「◎希望・○可・△BPなしなら可（BPありの人のみ）・×不可」、面談相手は「◎希望・○どちらでも・△避けたい・×不可」。</p></div><button class="btn pri" data-act="addCand">候補者を追加</button></div>';
   h += '<div class="csvbox"><div><b>CSVから読み込む</b>'
-    + (App.csvReport ? '<p class="sub" style="margin:4px 0 0">前回: ' + App.csvReport.added + '人追加・' + App.csvReport.updated + '人更新、時間帯の列 ' + App.csvReport.sess + ' 件を反映しました</p>' : '')
+    + (App.csvReport ? '<p class="sub" style="margin:4px 0 0">前回: ' + App.csvReport.added + '人追加・' + App.csvReport.updated + '人更新、時間帯の列 ' + App.csvReport.sess + ' 件を対応付け' + (App.csvReport.any ? '。BPあり ' + App.csvReport.bpN + '人（うちBPなしでも可 ' + App.csvReport.noBpOk + '人）・BPなし ' + App.csvReport.freeN + '人' + (App.csvReport.noneN ? '・どの枠も0の人 ' + App.csvReport.noneN + '人' : '') : '。「Any available slot without your Book Proposal」列が見つからないため、全員をBPありとして読み込みました') + (App.csvReport.unknown.length ? '。対応付けできなかった列: ' + App.csvReport.unknown.map(esc).join('、') : '') + '</p>' : '')
     + '</div>'
     + '<div class="row"><label class="row" style="gap:4px;font-size:13px"><input type="radio" name="csvmode" id="csvmode-add" value="add"' + (App.csvMode !== 'replace' ? ' checked' : '') + '>今の候補者に追加</label>'
-    + '<label class="row" style="gap:4px;font-size:13px"><input type="radio" name="csvmode" id="csvmode-rep" value="replace"' + (App.csvMode === 'replace' ? ' checked' : '') + '>置き換える</label></div>'
+    + '<label class="row" style="gap:4px;font-size:13px"><input type="radio" name="csvmode" id="csvmode-rep" value="replace"' + (App.csvMode === 'replace' ? ' checked' : '') + '>置き換える</label>'
     + '<input type="file" id="csvFile" accept=".csv,text/csv"></div></div>';
   if(!S.candidates.length) h += '<p class="sub">まだ候補者がいません。「候補者を追加」かCSVから登録してください。</p>';
   else {
@@ -330,8 +330,8 @@ function peopleView(E){
       const r = E.cands[c.id];
       h += '<tr><td><input class="name" type="text" id="cn-' + c.id + '" data-cn="' + c.id + '" value="' + esc(c.name) + '" aria-label="名前"></td>'
         + '<td><button class="bptog ' + (c.bp ? 'on' : '') + '" data-act="togBp" data-c="' + c.id + '" aria-pressed="' + c.bp + '" title="ブックプロポーザルの有無">' + (c.bp ? 'あり' : 'なし') + '</button></td>'
-        + G.sessions.map((g,i) => { const v = avail(c, g.key); return '<td class="' + (i===0?'grp':'') + '"><button class="cyc ' + v + '" data-act="cycAv" data-c="' + c.id + '" data-g="' + g.key + '" title="' + esc(g.label) + 'の可否">' + App.MARK[v] + '</button></td>'; }).join('')
-        + S.interviewers.map((v,i) => { const p = ip(c, v.id); return '<td class="' + (i===0?'grp':'') + '"><button class="cyc ' + p + '" data-act="cycIp" data-c="' + c.id + '" data-i="' + v.id + '" title="' + esc(v.name) + 'との希望">' + App.MARK[p] + '</button></td>'; }).join('')
+        + G.sessions.map((g,i) => { const v = avail(c, g.key); return '<td class="' + (i===0?'grp':'') + '"><button class="cyc ' + v + '" data-act="cycAv" data-c="' + c.id + '" data-g="' + g.key + '" title="' + esc(g.label) + ': ' + AV_LABEL[v] + '">' + MARK[v] + '</button></td>'; }).join('')
+        + S.interviewers.map((v,i) => { const p = ip(c, v.id); return '<td class="' + (i===0?'grp':'') + '"><button class="cyc ' + p + '" data-act="cycIp" data-c="' + c.id + '" data-i="' + v.id + '" title="' + esc(v.name) + ': ' + IP_LABEL[p] + '">' + MARK[p] + '</button></td>'; }).join('')
         + '<td class="grp memoc"><input class="memo" type="text" id="cm-' + c.id + '" data-cmemo="' + c.id + '" value="' + esc(c.note) + '" title="' + esc(c.note) + '" aria-label="メモ"></td>'
         + '<td>' + armBtn('rmCand', c.id, '削除', 'btn sm danger') + '</td></tr>';
     });
@@ -349,30 +349,30 @@ App.armBtn = armBtn;
 function settingsView(E){
   const G = E.G, k = K(), nIv = S.interviewers.length;
   let h = '<div class="list setwide">';
-  h += '<section class="panel"><h2>日程と時間帯</h2><p class="sub">候補者は1つの時間帯（例: 午前）の中で ' + k + ' 人と面談します。</p><div class="hrow"><div class="hgrp"><div class="hlab">日程</div><div class="hitems">'
+  h += '<section class="panel"><h2>日程と時間帯</h2><p class="sub">候補者は1つの時間帯（例: 午前）の中で ' + k + ' 人と面談します。</p><div class="hrow"><div class="hgrp">'
+    + '<div class="hlab">日程</div><div class="hitems">'
     + S.settings.days.map(d => '<div class="li"><input type="date" id="day-' + d.id + '" data-day="' + d.id + '" value="' + esc(d.date) + '" aria-label="日付">' + (S.settings.days.length > 1 ? armBtn('rmDay', d.id, '削除', 'btn sm danger') : '') + '</div>').join('')
     + '<button class="btn sm" data-act="addDay">日程を追加</button></div></div>'
     + '<div class="hgrp"><div class="hlab">時間帯</div><div class="hitems">'
-    + S.settings.sessions.map(se => '<div class="li"><input type="text" id="sl-' + se.id + '" data-sess="' + se.id + '" data-f="label" value="' + esc(se.label) + '" style="width:5em" aria-label="時間帯名"> <input type="time" id="st-' + se.id + '" data-sess="' + se.id + '" data-f="start" value="' + esc(se.start) + '" aria-label="開始時間">〜<input type="time" id="et-' + se.id + '" data-sess="' + se.id + '" data-f="end" value="' + esc(se.end) + '" aria-label="終了時間">' + armBtn('rmSess', se.id, '削除', 'btn sm danger') + '</div>').join('')
+    + S.settings.sessions.map(se => '<div class="li"><input type="text" id="sl-' + se.id + '" data-sess="' + se.id + '" data-f="label" value="' + esc(se.label) + '" style="width:5em" aria-label="時間帯の名前"><input type="time" step="300" id="ss-' + se.id + '" data-sess="' + se.id + '" data-f="start" value="' + esc(se.start) + '" aria-label="開始"><span class="muted">〜</span><input type="time" step="300" id="se-' + se.id + '" data-sess="' + se.id + '" data-f="end" value="' + esc(se.end) + '" aria-label="終了">' + (S.settings.sessions.length > 1 ? armBtn('rmSess', se.id, '削除', 'btn sm danger') : '') + '</div>').join('')
     + '<button class="btn sm" data-act="addSess">時間帯を追加</button></div></div></div></section>';
 
   h += '<section class="panel"><h2>コマの長さと間隔</h2><p class="sub">変更すると下のコマ一覧がすぐ変わります。はみ出した配置は外れます。</p><div class="fields">'
     + '<label class="f">1コマ（分）<input type="number" min="5" max="180" step="5" id="set-slot" data-set="slotMin" value="' + (+S.settings.slotMin) + '"></label>'
     + '<label class="f">間隔（分）<input type="number" min="0" max="120" step="5" id="set-gap" data-set="gapMin" value="' + (+S.settings.gapMin) + '"></label>'
-    + '<label class="f">1人あたりの面談数（×を付けた相手の数だけ減ります）<input type="number" min="1" max="' + Math.max(1,nIv) + '" id="set-k" data-set="perCandidate" value="' + (+S.settings.perCandidate) + '"></label>'
-    + '</div>';
+    + '<label class="f">1人あたりの面談数（×を付けた相手の数だけ減ります）<input type="number" min="1" max="' + Math.max(1,nIv) + '" id="set-k" data-set="perCandidate" value="' + k + '"></label></div>';
   if(k > nIv) h += '<p class="note">面談数（' + k + '）が面談相手の人数（' + nIv + '）より多いため割り当てられません。</p>';
   h += '<div class="list" style="margin-top:14px">' + G.sessions.map(g => {
     const cap = Math.min(Math.floor(g.slots.length * nIv / k), g.slots.length >= k ? Infinity : 0);
-    return '<div><div class="slotline"><b style="min-width:6em">' + esc(g.label) + '</b>' + (g.slots.length ? g.slots.map(s => '<span class="s">' + fmt(s.start) + '–' + fmt(s.end) + '</span>').join('') : '<span class="muted">コマなし</span>') + '</div>'
+    return '<div><div class="slotline"><b style="min-width:6em">' + esc(g.label) + '</b>' + (g.slots.length ? g.slots.map(s => '<span class="s">' + fmt(s.start) + '–' + fmt(s.end) + '</span>').join('') : '<span class="pill bad">コマが入りません</span>') + '</div>'
       + '<div class="cap">' + g.slots.length + 'コマ · この時間帯に入れられるのは最大 ' + (isFinite(cap) ? cap : 0) + ' 人</div></div>';
   }).join('') + '</div>';
   const needTot = S.candidates.reduce((s,c) => s + need(c), 0), capAll = G.sessions.reduce((s,g) => s + g.slots.length*nIv, 0);
-  h += '<p class="' + (capAll < needTot ? 'note' : 'cap') + '" style="margin-top:10px">全体の目安: 面談枠 ' + capAll + ' 件 / 必要な面談 ' + needTot + ' 件（×の分は差し引き済み）</p>';
+  h += '<p class="' + (capAll < needTot ? 'note' : 'cap') + '" style="margin-top:10px">全体の目安: 面談枠 ' + capAll + ' 件 / 必要な面談 ' + needTot + ' 件（×の分は差し引き済み）' + (capAll < needTot ? '。枠が足りません。コマを短くするか、時間帯か日程を増やしてください。' : '') + '</p></section>';
 
-  h += '<section class="panel"><div class="spread"><div><h2>面談相手（受入側）</h2><p class="sub">Quillmere University Press・Ostrander &amp; Finch・Larkspire Publishing の3社で固定しています。</p></div>'
-    + '<button class="btn sm" data-act="resetIv">3社に戻す</button></div>'
-    + '<div class="hitems">' + S.interviewers.map(v => '<div class="li"><span class="dot" style="--ic:' + ivColor(v.id) + '"></span><input type="text" id="ivs-' + v.id + '" data-ivs="' + v.id + '" value="' + esc(v.short || '') + '" aria-label="受入側略称"> <input type="text" id="iv-' + v.id + '" data-iv="' + v.id + '" value="' + esc(v.name) + '" aria-label="受入側名">' + (S.interviewers.length > 1 ? armBtn('rmIv', v.id, '削除', 'btn sm danger') : '') + '</div>').join('') + '<button class="btn sm" data-act="addIv">面談相手を追加</button></div></section>';
+  h += '<section class="panel"><div class="spread"><div><h2>面談相手（受入側）</h2><p class="sub">Quillmere University Press・Ostrander &amp; Finch・Larkspire Publishing の3社で固定しています。略称は表やブロックの中で使います。必要なら追加・名前の変更もできます。</p></div><span class="row"><button class="btn sm" data-act="addIv">面談相手を追加</button>' + armBtn('resetIv','x','3社に戻す','btn sm') + '</span></div><div class="list">'
+    + S.interviewers.map(v => '<div class="li"><span class="dot" style="--ic:' + ivColor(v.id) + '"></span><input type="text" id="ivs-' + v.id + '" data-ivs="' + v.id + '" value="' + esc(v.short || '') + '" placeholder="略称" aria-label="略称" style="width:8em"><input type="text" id="iv-' + v.id + '" data-iv="' + v.id + '" value="' + esc(v.name) + '" aria-label="面談相手の名前">' + armBtn('rmIv', v.id, '削除', 'btn sm danger') + '</div>').join('')
+    + '</div></section>';
   return h + '</div>';
 }
 
@@ -395,11 +395,11 @@ function summaryOf(o){
   const ids = new Set((o.candidates || []).map(c => c.id));
   const placed = new Set((o.assignments || []).filter(a => ids.has(a.cid)).map(a => a.cid));
   return { cands:(o.candidates || []).length, bp:(o.candidates || []).filter(c => c.bp !== false).length, placed:placed.size, asg:(o.assignments || []).length,
-    days:(o.settings?.days || []).map(d => dayLabel(d.date)).join('・'), ivs:(o.interviewers || []).map(v => v.short || v.name).join('・'), slot:o.settings?.slotMin, gap:o.settings?.gapMin, savedAt:(o.savedAt || new Date().toISOString()) };
+    days:(o.settings?.days || []).map(d => dayLabel(d.date)).join('・'), ivs:(o.interviewers || []).map(v => v.short || v.name).join('・'), slot:o.settings?.slotMin, gap:o.settings?.gapMin, savedAt:o.savedAt, from:o.savedFrom };
 }
 function summaryTable(m){
   return '<dl class="sumdl">'
-    + (m.savedAt ? '<dt>保存日時</dt><dd>' + esc(fmtDate(m.savedAt)) + '</dd>' : '')
+    + (m.savedAt ? '<dt>保存日時</dt><dd>' + esc(fmtDate(m.savedAt)) + (m.from ? '（' + esc(m.from) + '）' : '') + '</dd>' : '')
     + '<dt>候補者</dt><dd>' + m.cands + '人（BPあり ' + m.bp + '人）</dd>'
     + '<dt>配置済み</dt><dd>' + m.placed + '人・' + m.asg + '件</dd>'
     + '<dt>日程</dt><dd>' + esc(m.days || '—') + '</dd>'
@@ -409,9 +409,9 @@ function summaryTable(m){
 function exportView(E){
   const m = summaryOf(S);
   return '<div class="list">'
-    + '<section class="panel pdfpanel"><h2>現在の配置を出力する</h2><p class="sub">候補者・希望・時間とコマの設定・配置のすべてを、1つのJSONファイルに保存して引き継げます。</p>'
+    + '<section class="panel pdfpanel"><h2>現在の配置を出力する</h2><p class="sub">候補者・希望・時間とコマの設定・配置のすべてを、1つのJSONファイルに保存します。あとで「配置の続きを行う」タブでこのファイルを読み込むと、今の状態から作業を再開できます。別のパソコンや、もう一方の画面（カード配置／ガント調整）でも読み込めます。</p>'
     + summaryTable(m)
-    + '<div class="row" style="margin-top:14px"><button class="btn pri pdfmain" data-act="dlJson">JSONファイルをダウンロード</button><span class="muted" style="font-size:12px">ファイル名は自動で付けられます。</span></div>'
+    + '<div class="row" style="margin-top:14px"><button class="btn pri pdfmain" data-act="dlJson">JSONファイルをダウンロード</button><span class="muted" style="font-size:12px">ファイル名: mensetsu-' + stampStr(new Date()) + '.json</span></div>'
     + (FRAMED ? '<p class="note" style="margin-top:12px">この画面ではブラウザの制限でダウンロードできません。ダウンロード版のHTMLを開いて使ってください。</p>' : '')
     + '</section>'
     + '</div>';
@@ -419,12 +419,12 @@ function exportView(E){
 App.pending = null;
 function resumeView(){
   const P = App.pending;
-  let h = '<div class="list"><section class="panel pdfpanel"><h2>配置の続きを行う</h2><p class="sub">「現在の配置を出力する」で保存したJSONファイルを選んでください。</p>'
+  let h = '<div class="list"><section class="panel pdfpanel"><h2>配置の続きを行う</h2><p class="sub">「現在の配置を出力する」で保存したJSONファイルを選んでください。<b>.json ファイルのみ</b>読み込めます。</p>'
     + '<label class="dropz" id="dropz" for="resumeFile"><input type="file" id="resumeFile" accept=".json,application/json"><b>JSONファイルを選ぶ</b><span>またはここへドラッグ＆ドロップ</span></label>';
   if(P && P.error) h += '<p class="note" style="margin-top:12px">' + esc(P.error) + '</p>';
   if(P && P.data){
     h += '<div class="pend"><h3>' + esc(P.name) + '</h3>' + summaryTable(summaryOf(P.data))
-      + '<p class="sub" style="margin:8px 0">読み込むと、今この画面にある候補者と配置は置き換わります。必要なら先に保存しておいてください。</p>'
+      + '<p class="sub" style="margin:8px 0">読み込むと、今この画面にある候補者と配置は置き換わります。必要なら先に「現在の配置を出力する」で保存してください。</p>'
       + '<div class="row"><button class="btn pri" data-act="resumeApply">この内容で続きを始める</button><button class="btn" data-act="resumeCancel">やめる</button></div></div>';
   }
   h += '</section></div>';
@@ -439,7 +439,7 @@ function readResumeFile(file){
   r.onload = () => {
     let o;
     try{ o = JSON.parse(String(r.result).replace(/^﻿/, '')); }catch(e){ App.pending = { error:'「' + file.name + '」はJSONとして読めませんでした。ファイルが壊れていないか確認してください。' }; render(); return; }
-    if(!o || typeof o !== 'object' || !o.settings || !Array.isArray(o.candidates) || !Array.isArray(o.interviewers)){ App.pending = { error:'「' + file.name + '」はこのツールの保存データではありません。' }; render(); return; }
+    if(!o || typeof o !== 'object' || !o.settings || !Array.isArray(o.candidates) || !Array.isArray(o.interviewers)){ App.pending = { error:'「' + file.name + '」はこのツールの保存データではありません。「現在の配置を出力する」で作ったファイルを選んでください。' }; render(); return; }
     App.pending = { name:file.name, data:o }; render();
   };
   r.onerror = () => { App.pending = { error:'ファイルを読み込めませんでした。' }; render(); };
@@ -450,14 +450,14 @@ function helpView(){
   const step = (n, t, body) => '<li class="hs"><span class="hn">' + n + '</span><div><h3>' + t + '</h3>' + body + '</div></li>';
   const go = (tab, label) => '<button class="btn sm" data-act="tab" data-tab="' + tab + '">' + label + '</button>';
   return '<div class="help">'
-    + '<section class="panel"><h2>使い方</h2><p class="sub">ブックプロポーザル面談（11/6・11/7、受入側3社）の時間割を作り、PDFで配るまでの流れです。</p>'
+    + '<section class="panel"><h2>使い方</h2><p class="sub">ブックプロポーザル面談（11/6・11/7、受入側3社）の時間割を作り、PDFで配るまでの流れです。上から順に進めてください。</p>'
     + '<ol class="steps">'
-    + step(1, '候補者をCSVで読み込む', '<p>' + go('people','候補者') + ' タブの「CSVから読み込む」でファイルを選びます。列は <code>Name</code>・4つの時間帯（午前/午後など）で管理できます。</p>')
-    + step(2, '希望を確認・追加する', '<p>同じタブの表で記号をタップすると切り替わります。特に希望の強い時間帯は ◎ に、会えない受入側は × にします。</p>')
-    + step(3, '時間とコマを確かめる', '<p>' + go('settings','時間とコマ') + ' タブで、1コマの長さと間隔を決めます。下に出る「面談枠 ○件 / 必要な面談 ○件」から、適切な値に調整します。</p>')
-    + step(4, '自動で割当案を作る', '<p>' + go('schedule', esc(PAGE.scheduleTab || 'スケジュール')) + ' タブの「案を作る」を押し、良さそうな案の「この案を読み込む」を押します。</p>')
+    + step(1, '候補者をCSVで読み込む', '<p>' + go('people','候補者') + ' タブの「CSVから読み込む」でファイルを選びます。列は <code>Name</code>・4つの時間帯（<i>… with your Book Proposal</i>）・<code>Any available slot without your Book Proposal</code>・<code>Memo</code>。1 が○、0 が×として入ります。初回は「置き換える」を選ぶとサンプルが消えます。</p>')
+    + step(2, '希望を確認・追加する', '<p>同じタブの表で記号をタップすると切り替わります。特に希望の強い時間帯は ◎ に、会えない受入側は × にします。× を付けた数だけ、その人の面談数が減ります。BPの「あり／なし」もここで直せます。</p>')
+    + step(3, '時間とコマを確かめる', '<p>' + go('settings','時間とコマ') + ' タブで、1コマの長さと間隔を決めます。下に出る「面談枠 ○件 / 必要な面談 ○件」で枠が足りるか確認できます。</p>')
+    + step(4, '自動で割当案を作る', '<p>' + go('schedule', esc(PAGE.scheduleTab || 'スケジュール')) + ' タブの「案を作る」を押し、良さそうな案の「この案を読み込む」を押します。BPありの人が最優先、次に希望日時、次に受入側の希望の順で組まれます。</p>')
     + step(5, '手で仕上げる', PAGE.helpAdjust || '')
-    + step(6, 'PDFで出力する', '<p>画面右上の <b>印刷プレビュー</b> を押すと、出力イメージが大きく表示されます。</p>')
+    + step(6, 'PDFで出力する', '<p>画面右上の <b>印刷プレビュー</b> を押すと、出力イメージが大きく表示されます。日ごとの時間割・候補者別一覧・面談相手別から出力する内容を選び、タイトルを確かめてから「印刷／PDFに保存」を押し、送信先で「PDFに保存」を選びます。</p>')
     + '</ol></section>'
     + '<div class="grid2">'
     + '<section class="panel"><h2>記号の意味</h2><table class="htab"><tbody>'
@@ -478,7 +478,7 @@ function helpView(){
     + '<li>1人の面談は、午前か午後のどちらか1つの時間帯の中に収めます。</li>'
     + '<li>「固定する」を押した人は、自動で案を作り直してもそのまま残ります。</li>'
     + '<li>「リセット」でその人の割り当てだけを外せます。全員を外すときは「全員リセット」（2回押し）。</li>'
-    + '<li>入力内容はこのブラウザに自動で保存されます。作業を中断・引き継ぐときは ' + go('export','現在の配置を出力する') + ' でJSONファイルを保存しておきましょう。</li>'
+    + '<li>入力内容はこのブラウザに自動で保存されます。作業を中断・引き継ぐときは ' + go('export','現在の配置を出力する') + ' でJSONファイルを保存し、' + go('resume','配置の続きを行う') + ' で読み込むと続きから再開できます。</li>'
     + '</ul></section>'
     + '</div></div>';
 }
@@ -516,13 +516,13 @@ A.rmCand = el => { S.candidates = S.candidates.filter(c => c.id !== el.dataset.i
 A.addIv = () => { S.interviewers.push({ id:uid('i'), name:'面談相手' + (S.interviewers.length+1), short:'' }); commit(); };
 A.resetIv = () => { S.interviewers = FIXED_IV(); commit(); toast('面談相手を3社に戻しました'); };
 A.rmIv = el => { S.interviewers = S.interviewers.filter(v => v.id !== el.dataset.id); if(+S.settings.perCandidate > S.interviewers.length) S.settings.perCandidate = Math.max(1, S.interviewers.length); commit(); };
-A.addDay = () => { const last = S.settings.days[S.settings.days.length-1]; let d = ''; try{ const x = new Date(last.date + 'T00:00:00'); x.setDate(x.getDate()+1); d = x.getFullYear() + '-' + String(x.getMonth()+1).padStart(2,'0') + '-' + String(x.getDate()).padStart(2,'0'); }catch(e){} S.settings.days.push({ id:uid('d'), date:d || '2026-01-01' }); commit(); };
+A.addDay = () => { const last = S.settings.days[S.settings.days.length-1]; let d = ''; try{ const x = new Date(last.date + 'T00:00:00'); x.setDate(x.getDate()+1); d = x.getFullYear() + '-' + String(x.getMonth()+1).padStart(2,'0') + '-' + String(x.getDate()).padStart(2,'0'); }catch(e){} S.settings.days.push({ id:uid('d'), date:d }); commit(); };
 A.rmDay = el => { S.settings.days = S.settings.days.filter(d => d.id !== el.dataset.id); commit(); };
 A.addSess = () => { S.settings.sessions.push({ id:uid('s'), label:'夕方', start:'17:00', end:'18:00' }); commit(); };
 A.rmSess = el => { S.settings.sessions = S.settings.sessions.filter(s => s.id !== el.dataset.id); commit(); };
 A.autoRun = () => { App.plans = solve(); render(); };
 A.planLoad = el => { const p = App.plans?.plans[+el.dataset.i]; if(!p) return; S.assignments = p.asg.map(a => ({...a})); App.sel = null; commit(); toast('案' + (+el.dataset.i+1) + 'を読み込みました'); };
-A.resetCand = el => { const id = el.dataset.c; const c = cand(id); S.assignments = S.assignments.filter(a => a.cid !== id); S.locked = S.locked.filter(x => x !== id); App.sel = null; commit(); toast((c ? c.name : '') + 'さんの割り当てを外しました'); };
+A.resetCand = el => { const id = el.dataset.c; const c = cand(id); S.assignments = S.assignments.filter(a => a.cid !== id); S.locked = S.locked.filter(x => x !== id); App.sel = null; commit(); toast((c ? c.name + 'さんの' : '') + '割り当てをリセットしました'); };
 A.lock = el => { const id = el.dataset.c; const s = new Set(S.locked); s.has(id) ? s.delete(id) : s.add(id); S.locked = [...s]; commit(); };
 A.copy = el => {
   const ta = document.getElementById(el.dataset.t); if(!ta) return;
@@ -540,7 +540,7 @@ function parseCsv(t){
     const ch = t[i];
     if(q){ if(ch === '"'){ if(t[i+1] === '"'){ f += '"'; i++; } else q = false; } else f += ch; }
     else if(ch === '"') q = true;
-    else if(ch === ','){ row.push(f); f = ''; }
+    else if(ch === ',' ){ row.push(f); f = ''; }
     else if(ch === '\n' || ch === '\r'){ if(ch === '\r' && t[i+1] === '\n') i++; row.push(f); rows.push(row); row = []; f = ''; }
     else f += ch;
   }
@@ -637,7 +637,7 @@ document.addEventListener('change', ev => {
   else if(d.ivs){ iv(d.ivs).short = el.value.trim(); commit(); }
   else if(d.day){ S.settings.days.find(x => x.id === d.day).date = el.value; commit(); }
   else if(d.sess){ S.settings.sessions.find(x => x.id === d.sess)[d.f] = el.value; commit(); }
-  else if(d.set){ let v = Math.round(+el.value || 0); if(d.set === 'slotMin') v = Math.max(5, v); if(d.set === 'gapMin') v = Math.max(0, v); if(d.set === 'perCandidate') v = Math.max(1, Math.min(Math.max(1, S.interviewers.length), v)); if(d.set === 'slotMin' || d.set === 'gapMin' || d.set === 'perCandidate') S.settings[d.set] = v; commit(); }
+  else if(d.set){ let v = Math.round(+el.value || 0); if(d.set === 'slotMin') v = Math.max(5, v); if(d.set === 'gapMin') v = Math.max(0, v); if(d.set === 'perCandidate') v = Math.max(1, Math.min(Math.max(1,S.interviewers.length), v)); S.settings[d.set] = v; App.plans = null; commit(); }
 });
 
 
@@ -657,21 +657,24 @@ function reportHtml(){
   const title = (!S.title || S.title === '面談スケジュール') ? 'Interview Schedule' : S.title;
   const bpEn = (c, gk) => !c ? '' : c.bp ? (gk && avail(c, gk) === 'nobp' ? 'Yes (without BP this time)' : 'Yes') : 'No';
   const gLabel = g => (S.settings.days.length > 1 ? dayEn(g.day.date) + ' ' : '') + sessEn(g.se.label);
+  const now = new Date();
+  const stamp = now.getFullYear() + '/' + (now.getMonth()+1) + '/' + now.getDate() + ' ' + String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
   const notDone = S.candidates.filter(c => ['none','partial','bad'].includes(E.cands[c.id].status));
   const ivName = id => esc(ivShort(id));
   let body = '';
-  const head = '<header><h1>' + esc(title) + '</h1><div class="meta"><sup class="bpm">BP</sup> = with Book Proposal / ' + S.interviewers.filter(v => v.short && v.short !== v.name).map(v => esc(v.short || v.name)).join(' / ') + '</div>';
+  const head = '<header><h1>' + esc(title) + '</h1><div class="meta"><sup class="bpm">BP</sup> = with Book Proposal / ' + S.interviewers.filter(v => v.short && v.short !== v.name).map(v => esc(v.short) + ' = ' + esc(v.name)).join(', ') + ' / Slot ' + (+S.settings.slotMin) + ' min, gap ' + (+S.settings.gapMin) + ' min / ' + S.candidates.length + ' candidates / Generated ' + stamp + '</div></header>'
+    + (notDone.length ? '<p class="warn">Incomplete / needs fixing: ' + notDone.map(c => esc(c.name) + ' (' + STATUS_EN[E.cands[c.id].status] + ')').join(', ') + '</p>' : '');
   if(o.grid){
     S.settings.days.forEach((d, di) => {
       const gs = G.sessions.filter(g => g.day.id === d.id && g.slots.length);
       if(!gs.length) return;
       body += '<section class="page">' + head + '<h2>' + esc(dayEn(d.date)) + '</h2><div class="sessions">';
       gs.forEach(g => {
-        body += '<div class="sess"><h3>' + esc(sessEn(g.se.label)) + ' (' + esc(g.se.start) + '–' + esc(g.se.end) + ')</h3><table class="tt"><thead><tr><th class="t">Time</th>' + S.interviewers.map(v => '<th>' + esc(v.short || v.name) + '</th>').join('') + '</tr></thead><tbody>';
+        body += '<div class="sess"><h3>' + esc(sessEn(g.se.label)) + ' (' + esc(g.se.start) + '–' + esc(g.se.end) + ')</h3><table class="tt"><thead><tr><th class="t">Time</th>' + S.interviewers.map(v => '<th>' + esc(v.name) + '</th>').join('') + '</tr></thead><tbody>';
         g.slots.forEach(sl => {
           body += '<tr><th class="t">' + fmt(sl.start) + '<br><small>–' + fmt(sl.end) + '</small></th>' + S.interviewers.map(v => {
             const here = S.assignments.filter(a => a.iid === v.id && a.slot === sl.key);
-            return '<td>' + here.map(a => { const c = cand(a.cid); if(!c) return ''; const nb = c.bp && avail(c, sl.g) === 'nobp'; return esc(c.name) + (c.bp && !nb ? '<sup class="bpm">BP</sup>' : ''); }).join('') + '</td>';
+            return '<td>' + here.map(a => { const c = cand(a.cid); if(!c) return ''; const nb = c.bp && avail(c, sl.g) === 'nobp'; return esc(c.name) + (c.bp && !nb ? '<sup class="bpm">BP</sup>' : ''); }).join('<br>') + '</td>';
           }).join('') + '</tr>';
         });
         body += '</tbody></table></div>';
@@ -680,7 +683,7 @@ function reportHtml(){
     });
   }
   if(o.list){
-    body += '<section class="page">' + head + '<h2>By Candidate</h2><table class="list"><thead><tr><th>Candidate</th><th>BP</th><th>Session</th>' + Array.from({length:K()}, (_,i) => '<th>' + ordEn(i+1) + '</th>').join('') + '</tr></thead><tbody>';
+    body += '<section class="page">' + head + '<h2>By Candidate</h2><table class="list"><thead><tr><th>Candidate</th><th>BP</th><th>Session</th>' + Array.from({length:K()}, (_,i) => '<th>' + ordEn(i+1) + ' interview</th>').join('') + '</tr></thead><tbody>';
     const rows = S.candidates.map(c => ({ c, r:E.cands[c.id] })).sort((a,b) => (a.r.items[0]?.sl.gidx ?? 1e9) - (b.r.items[0]?.sl.gidx ?? 1e9));
     rows.forEach(({c, r}) => {
       const g = r.items[0] ? G.gmap[r.items[0].sl.g] : null;
@@ -697,7 +700,7 @@ function reportHtml(){
       G.sessions.forEach(g => {
         const gi = items.filter(x => x.sl.g === g.key);
         if(!gi.length) return;
-        body += '<div class="ivg"><h3>' + esc(dayEn(g.day.date)) + ' · ' + esc(sessEn(g.se.label)) + ' (' + esc(g.se.start) + '–' + esc(g.se.end) + ')</h3><table class="list"><thead><tr><th>Time</th><th>Candidate</th><th>BP</th></tr></thead><tbody>'
+        body += '<div class="ivg"><h3>' + esc(dayEn(g.day.date)) + ' · ' + esc(sessEn(g.se.label)) + ' (' + esc(g.se.start) + '–' + esc(g.se.end) + ')</h3><table class="list"><thead><tr><th class="tm">Time</th><th>Candidate</th><th class="bpc">BP</th></tr></thead><tbody>'
           + gi.map(x => '<tr><td class="tm"><b>' + fmt(x.sl.start) + '</b>–' + fmt(x.sl.end) + '</td><td class="nm">' + esc(cand(x.a.cid)?.name) + '</td><td class="bpc">' + bpEn(cand(x.a.cid), x.sl.g) + '</td></tr>').join('')
           + '</tbody></table></div>';
       });
@@ -706,24 +709,32 @@ function reportHtml(){
     });
   }
   if(!body) body = '<section class="page">' + head + '<p>Select at least one section to output.</p></section>';
-  const css = '@page{size:A4 landscape;margin:12mm}*{box-sizing:border-box}html,body{margin:0;background:#fff;color:#111}body{font-family:"Yu Gothic","YuGothic","Hiragino Sans","Meiryo",sans-serif;font-size:10pt}body{padding:0}.page{padding:0;page-break-after:always;break-after:page}.page:last-child{page-break-after:auto;break-after:auto}header{display:flex;justify-content:space-between;align-items:baseline;border-bottom:2px solid #111;padding-bottom:4px;margin-bottom:8px}h1{font-size:14pt;margin:0}.meta{font-size:8.5pt;color:#4b5563}.sessions{display:flex;gap:8mm}.sess{flex:1;min-width:0}table{border-collapse:collapse;width:100%}th,td{border:1px solid #888;padding:4px 6px;vertical-align:middle}thead th{background:#eef0f4;font-size:9.5pt}.tt td{text-align:center;height:13mm;font-weight:700;font-size:10.5pt}.tt th.t{width:17mm;text-align:center;font-size:9.5pt;background:#f6f7f9}.list td{font-size:10pt}.list .nm{font-weight:700;white-space:nowrap}.bpm{font-size:6.5pt;font-weight:700;color:#1d4f9c;margin-left:2px;vertical-align:super}';
+  const css = '@page{size:A4 landscape;margin:12mm}*{box-sizing:border-box}html,body{margin:0;background:#fff;color:#111}body{font-family:"Yu Gothic","YuGothic","Hiragino Sans","Meiryo",sans-serif;font-size:10.5pt;line-height:1.4;-webkit-print-color-adjust:exact;print-color-adjust:exact}'
+    + '.page{padding:0;page-break-after:always;break-after:page}.page:last-child{page-break-after:auto;break-after:auto}'
+    + '@media screen{body{background:#e9ebef;padding:16px}.page{background:#fff;width:273mm;min-height:186mm;margin:0 auto 16px;padding:12mm;box-shadow:0 2px 10px rgba(0,0,0,.15)}}'
+    + 'header{display:flex;justify-content:space-between;align-items:baseline;border-bottom:2px solid #111;padding-bottom:4px;margin-bottom:8px}h1{font-size:14pt;margin:0}.meta{font-size:8.5pt;color:#555}'
+    + 'h2{font-size:13pt;margin:6px 0 8px}h3{font-size:11pt;margin:0 0 4px}.warn{font-size:9pt;color:#9b1c14;margin:0 0 6px}'
+    + '.sessions{display:flex;gap:8mm}.sess{flex:1;min-width:0}table{border-collapse:collapse;width:100%}th,td{border:1px solid #888;padding:4px 6px;vertical-align:middle}'
+    + 'thead th{background:#eef0f4;font-size:9.5pt}.tt td{text-align:center;height:13mm;font-weight:700;font-size:10.5pt}.tt th.t{width:17mm;text-align:center;font-size:9.5pt;background:#f6f7f9}.tt th.t small{font-weight:400;color:#555;font-size:8pt}'
+    + '.list td{font-size:10pt}.list .nm{font-weight:700;white-space:nowrap}.list .memo{font-size:8.5pt;color:#444}.bpm{font-size:6.5pt;font-weight:700;color:#1d4f9c;margin-left:2px;vertical-align:super}.bpc{font-size:9pt;white-space:nowrap}.muted{color:#888}.ivg{margin-bottom:6mm;break-inside:avoid;page-break-inside:avoid}.ivg .tm{width:30mm;white-space:nowrap}.ivg th.bpc{width:55mm}tr{page-break-inside:avoid;break-inside:avoid}';
   return '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>' + esc(title) + '</title><style>' + css + '</style></head><body>' + body + '</body></html>';
 }
 function openReport(){
   closeReport();
-  const P = { bg:'#ffffff', fg:'#1a2030', mu:'#586174', ln:'#b5bdcc', ac:'#2b4a88', on:'#dfe8ff', btn:'#ffffff' };
-  const btn = (pri) => 'font:inherit;font-size:13px;font-weight:700;padding:7px 14px;border-radius:6px;cursor:pointer;border:1px solid ' + (pri ? P.ac : P.ln) + ';background:' + (pri ? P.ac : P.btn) + ';color:' + (pri ? '#fff' : P.fg) + ';';
+  const dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches && document.documentElement.dataset.theme !== 'light' || document.documentElement.dataset.theme === 'dark';
+  const P = dark ? { bg:'#191e28', fg:'#e5e8ef', mu:'#9aa2b4', ln:'#454e63', ac:'#8eaeeb', on:'#0f131b', btn:'#222836' } : { bg:'#ffffff', fg:'#1a2030', mu:'#586174', ln:'#b5bdcc', ac:'#2b4a88', on:'#ffffff', btn:'#ffffff' };
+  const btn = (pri) => 'font:inherit;font-size:13px;font-weight:700;padding:7px 14px;border-radius:6px;cursor:pointer;border:1px solid ' + (pri ? P.ac : P.ln) + ';background:' + (pri ? P.ac : P.btn) + ';color:' + (pri ? P.on : P.fg);
   const lab = 'display:inline-flex;align-items:center;gap:4px;font-size:13px;color:' + P.fg;
   const ov = document.createElement('div'); ov.id = 'rpOverlay';
-  ov.setAttribute('style', 'position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:2vh 2vw;background:rgba(10,14,22,.55);font-family:"Zen Kaku Gothic New","Yu Gothic","Meiryo",sans-serif;');
-  ov.innerHTML = '<div id="rpDialog" role="dialog" aria-modal="true" aria-label="PDFのプレビュー" style="width:min(1280px,96vw);height:94vh;display:flex;flex-direction:column;background:' + P.bg + ';color:' + P.fg + ';border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.2);overflow:hidden">'
-    + '<div style="display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid ' + P.ln + ';background:#f8f9fc">'
-    + '<div style="display:flex;flex-direction:column;min-width:0"><b style="font-size:17px">PDFのプレビュー</b><span style="font-size:12px;color:' + P.mu + '">「印刷／PDFに保存」を押すと保存画面が開きます</span></div>'
+  ov.setAttribute('style', 'position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:2vh 2vw;background:rgba(10,14,22,.55);font-family:"Zen Kaku Gothic New","Yu Gothic","Meiryo",sans-serif');
+  ov.innerHTML = '<div id="rpDialog" role="dialog" aria-modal="true" aria-label="PDFのプレビュー" style="width:min(1280px,96vw);height:94vh;display:flex;flex-direction:column;background:' + P.bg + ';color:' + P.fg + ';border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.35);overflow:hidden">'
+    + '<div style="display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid ' + P.ln + '">'
+    + '<div style="display:flex;flex-direction:column;min-width:0"><b style="font-size:17px">PDFのプレビュー</b><span style="font-size:12px;color:' + P.mu + '">「印刷／PDFに保存」を押し、送信先で「PDFに保存」を選んでください（A4横）。</span></div>'
     + '<div style="display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center">'
     + '<label style="' + lab + '"><input type="checkbox" id="rp-grid" data-rp="grid"' + (App.rp.grid ? ' checked' : '') + '>日ごとの時間割</label>'
     + '<label style="' + lab + '"><input type="checkbox" id="rp-list" data-rp="list"' + (App.rp.list ? ' checked' : '') + '>候補者別一覧</label>'
     + '<label style="' + lab + '"><input type="checkbox" id="rp-iv" data-rp="iv"' + (App.rp.iv ? ' checked' : '') + '>面談相手別</label>'
-    + '<input type="text" id="rp-title" value="' + esc(S.title && S.title !== '面談スケジュール' ? S.title : 'Interview Schedule') + '" aria-label="タイトル" style="font:inherit;font-size:13px;padding:7px 10px;border:1px solid ' + P.ln + ';border-radius:6px;width:220px;background:' + P.btn + ';color:' + P.fg + '">'
+    + '<input type="text" id="rp-title" value="' + esc(S.title && S.title !== '面談スケジュール' ? S.title : 'Interview Schedule') + '" aria-label="タイトル" style="font:inherit;font-size:13px;width:12em;padding:6px 8px;border-radius:6px;border:1px solid ' + P.ln + ';background:' + P.btn + ';color:' + P.fg + '">'
     + '<button data-act="rpPrint" style="' + btn(true) + '">印刷／PDFに保存</button><button data-act="rpClose" style="' + btn(false) + '">閉じる</button></div></div>'
     + '<iframe id="rpFrame" title="PDFのプレビュー" style="flex:1;width:100%;border:0;background:#e9ebef"></iframe></div>';
   document.body.appendChild(ov);
@@ -742,7 +753,8 @@ A.pdfNow = () => {
   const f = document.createElement('iframe'); f.id = 'rpHidden'; f.title = 'PDF出力'; f.setAttribute('aria-hidden','true');
   f.style.cssText = 'position:fixed;left:-20000px;top:0;width:1123px;height:794px;border:0';
   document.body.appendChild(f);
-  let d; try{ d = f.contentDocument; d.open(); d.write(reportHtml()); d.close(); }
+  let d;
+  try{ d = f.contentDocument; d.open(); d.write(reportHtml()); d.close(); }
   catch(e){ f.remove(); openReport(); return; }
   const go = () => {
     if(!d.querySelector('.page')){ f.remove(); openReport(); return; }
@@ -801,7 +813,7 @@ App.pointerDrag = function(o){
 
 document.addEventListener('dragover', e => { const z = e.target.closest && e.target.closest('#dropz'); if(z){ e.preventDefault(); z.classList.add('over'); } });
 document.addEventListener('dragleave', e => { const z = e.target.closest && e.target.closest('#dropz'); if(z) z.classList.remove('over'); });
-document.addEventListener('drop', e => { const z = e.target.closest && e.target.closest('#dropz'); if(!z) return; e.preventDefault(); z.classList.remove('over'); const fs = e.dataTransfer && e.dataTransfer.files; if(fs && fs.length){ const fr = new FileReader(); fr.onload = () => importText(fr.result); fr.readAsText(fs[0]); } });
+document.addEventListener('drop', e => { const z = e.target.closest && e.target.closest('#dropz'); if(!z) return; e.preventDefault(); z.classList.remove('over'); const fs = e.dataTransfer && e.dataTransfer.files; if(fs && fs.length > 1){ App.pending = { error:'ファイルは1つだけ選んでください。' }; render(); return; } readResumeFile(fs && fs[0]); });
 
 App.start = function(){
   S = normalize(load() || sample());
@@ -814,7 +826,7 @@ App.start = function(){
 <script>
 (function(){
 'use strict';
-window.PAGE.helpAdjust = '<p>左の候補者の名前を表のマスへドラッグすると配置されます（タップで選んでからマスをタップしても可）。置いたカードはドラッグで移動できます。重なっている場合は、対象のカードを選んでから別のマスをタップすると入れ替えできます。</p>';
+window.PAGE.helpAdjust = '<p>左の候補者の名前を表のマスへドラッグすると配置されます（タップで選んでからマスをタップしても可）。置いたカードはドラッグで別のマスへ動かせ、埋まっているマスなら入れ替わります。左の一覧へ戻すと外れます。候補者を選ぶと、置けるマスが緑、注意が黄、置けないマスが斜線で表示されます。</p>';
 const A = App.actions, esc = App.esc;
 
 function candInfo(E, cid){
@@ -822,7 +834,7 @@ function candInfo(E, cid){
   const locked = App.S.locked.includes(cid);
   const av = E.G.sessions.map(g => { const v = App.avail(c, g.key); return '<span class="chip ' + (v === 'nobp' ? 'avoid' : v) + '">' + esc(g.label) + ' ' + App.MARK[v] + (v === 'nobp' ? ' BPなし' : '') + '</span>'; }).join('');
   const ps = App.S.interviewers.filter(v => App.ip(c, v.id) !== 'ok').map(v => { const p = App.ip(c, v.id); return '<span class="chip ' + p + '">' + esc(v.short || v.name) + ' ' + App.MARK[p] + '</span>'; }).join('');
-  return '<div class="selbar"><div class="spread"><div><b class="selname">' + esc(c.name) + '</b> ' + App.bpBadge(c) + ' ' + App.statusPill(r.status) + '</div>'
+  return '<div class="selbar"><div class="spread"><div><b class="selname">' + esc(c.name) + '</b> ' + App.bpBadge(c) + ' ' + App.statusPill(r.status) + '' + '</div>'
     + '<div class="row">' + (App.sel.type === 'card' ? '<button class="btn sm danger" data-act="rmCard">このカードを外す</button>' : '')
     + (r.items.length ? '<button class="btn sm" data-act="resetCand" data-c="' + cid + '">この人をリセット</button>' : '')
     + '<button class="btn sm ' + (locked ? 'on' : '') + '" data-act="lock" data-c="' + cid + '">' + (locked ? '固定中' : '固定する') + '</button>'
@@ -840,7 +852,7 @@ window.PAGE.renderSchedule = function(E){
   const S = App.S, k = E.k, sel = App.sel;
   const selCid = sel ? (sel.type === 'cand' ? sel.cid : S.assignments[sel.ix]?.cid) : null;
   let h = App.autoPanel(E);
-  h += '<div class="a-layout"><aside class="panel tray" data-drop="tray"><div class="spread"><h2>候補者</h2>' + (S.assignments.length ? App.armBtn('clearAsg','x','全員リセット','btn sm danger') : '') + '</div>';
+  h += '<div class="a-layout"><aside class="panel tray" data-drop="tray"><div class="spread"><h2>候補者</h2>' + (S.assignments.length ? App.armBtn('clearAsg','x','全員リセット','btn sm danger') : '') + '</div><p class="sub">名前を表のマスへドラッグ（またはタップして選び、マスをタップ）。置いたカードもドラッグで動かせます。ここへ戻すと外れます。</p><div class="tray-list">';
   if(!S.candidates.length) h += '<p class="sub">候補者タブから登録してください。</p>';
   const isDone = c => { const r = E.cands[c.id]; return r.need > 0 && r.items.length >= r.need; };
   const ord = App.ordered(), todo = ord.filter(c => !isDone(c)), done = ord.filter(isDone);
@@ -864,7 +876,7 @@ window.PAGE.renderSchedule = function(E){
   E.G.sessions.forEach(g => {
     h += '<div class="panel sess"><div class="spread"><h3>' + esc(g.label) + '</h3><span class="muted num" style="font-size:12px">' + g.slots.length + 'コマ</span></div>';
     if(!g.slots.length){ h += '<p class="sub">この時間帯にはコマが入りません。</p></div>'; return; }
-    h += '<div class="scroll"><table class="tt"><thead><tr><th></th>' + S.interviewers.map(v => '<th><span class="dot" style="--ic:' + App.ivColor(v.id) + '"></span> <span title="' + esc(v.name) + '">' + esc(v.short || v.name) + '</span></th>').join('') + '</tr></thead><tbody>';
+    h += '<div class="scroll"><table class="tt"><thead><tr><th></th>' + S.interviewers.map(v => '<th><span class="dot" style="--ic:' + App.ivColor(v.id) + '"></span> <span title="' + esc(v.name) + '">' + esc(v.name) + '</span></th>').join('') + '</tr></thead><tbody>';
     g.slots.forEach(sl => {
       h += '<tr><th class="t num">' + App.fmt(sl.start) + '<small>' + App.fmt(sl.end) + '</small></th>';
       S.interviewers.forEach(v => {
@@ -886,10 +898,11 @@ window.PAGE.renderSchedule = function(E){
     });
     h += '</tbody></table></div></div>';
   });
-  h += '</div><p class="legend" style="margin-top:4px"><span>カードの数字＝その人の何件目か</span><span>◎ 希望の相手</span><span>△ 避けたい相手</span><span>赤い枠＝要修正</span></p>';
+  h += '</div><p class="legend" style="margin-top:4px"><span>カードの数字＝その人の何件目か</span><span>◎ 希望の相手</span><span>△ 避けたい相手</span><span>赤い枠＝要修正</span></p></section></div>';
   return h;
 };
 
+/* highlight cells without re-rendering (works during drag) */
 function highlight(){
   const S = App.S, sel = App.sel, G = App.E.G;
   const cells = document.querySelectorAll('td.cell');
@@ -921,7 +934,7 @@ function place(iid, slot){
   const occIx = S.assignments.findIndex(a => a.iid === iid && a.slot === slot);
   if(sel.type === 'cand'){
     const c = App.cand(sel.cid), cnt = S.assignments.filter(a => a.cid === sel.cid).length;
-    const nd = App.need(c); if(cnt >= nd){ App.toast(nd === 0 ? c.name + 'さんは全員×のため面談がありません' : c.name + 'さんは' + nd + '件とも配置済みです。カードを外してから別のマスを選んでください'); return; }
+    const nd = App.need(c); if(cnt >= nd){ App.toast(nd === 0 ? c.name + 'さんは全員×のため面談がありません' : c.name + 'さんは' + nd + '件とも配置済みです。カードを動かしてください'); return; }
     if(occIx >= 0){ App.toast('このマスは埋まっています'); return; }
     S.assignments.push({ cid:sel.cid, iid, slot });
     if(cnt + 1 >= nd) App.sel = null;
@@ -950,13 +963,14 @@ A.unsel = () => { App.sel = null; App.render(); };
 A.rmCard = () => { if(App.sel?.type !== 'card') return; App.S.assignments.splice(App.sel.ix, 1); App.sel = null; App.commit(); };
 A.clearCand = el => { const cid = el.dataset.c; App.S.assignments = App.S.assignments.filter(a => a.cid !== cid); App.sel = { type:'cand', cid }; App.commit(); };
 
+/* drag: mouse and touch */
 App.pointerDrag({
   handle:'.card, .cchip',
   zone:'td.cell, .tray',
   start(el){
     if(el.classList.contains('cchip')){
       const cid = el.dataset.c, cnt = App.S.assignments.filter(a => a.cid === cid).length;
-      const nd = App.need(App.cand(cid)); if(cnt >= nd){ App.toast(App.cand(cid).name + (nd === 0 ? 'さんは面談がありません' : 'さんは' + nd + '件とも配置済みです。カードを外してから別の候補者を選んでください')); return false; }
+      const nd = App.need(App.cand(cid)); if(cnt >= nd){ App.toast(App.cand(cid).name + (nd === 0 ? 'さんは面談がありません' : 'さんは' + nd + '件とも配置済みです。カードを動かしてください')); return false; }
       App.sel = { type:'cand', cid };
     } else App.sel = { type:'card', ix:+el.dataset.ix };
     highlight();
